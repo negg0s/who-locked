@@ -6,7 +6,7 @@ from typing import Optional
 import click
 
 from .context_menu import install_context_menu, is_context_menu_installed, uninstall_context_menu
-from .core import inspect_locks, release_locks, scan_directory_tree, wait_for_release, watch_lock_events
+from .core import clean_directory, inspect_locks, release_locks, scan_directory_tree, wait_for_release, watch_lock_events
 from .doctor import run_diagnostics
 from .models import LockReport, TreeReport
 
@@ -223,6 +223,50 @@ def release_cmd(path: str, force: bool, timeout: float, yes: bool, json_mode: bo
             sys.exit(0)
         else:
             click.echo(f"\nWarning: {result['remaining_locks']} lock(s) still remain.")
+            sys.exit(1)
+
+
+@cli.command("clean")
+@click.argument("path", type=click.Path(exists=True, file_okay=False, dir_okay=True))
+@click.option("-y", "--yes", is_flag=True, help="Bypass confirmation prompt.")
+@click.option("-f", "--force", is_flag=True, help="Force kill locking processes.")
+@click.option("-t", "--timeout", default=3.0, show_default=True, help="Termination timeout in seconds.")
+@click.option("--dry-run", is_flag=True, help="Preview actions without deleting files.")
+@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
+def clean_cmd(path: str, yes: bool, force: bool, timeout: float, dry_run: bool, json_mode: bool) -> None:
+    """Release locks inside a directory and delete it recursively."""
+    if dry_run:
+        result = clean_directory(path, force=force, timeout=timeout, dry_run=True)
+        if json_mode:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            click.echo(f"Dry run for directory: {result['target_path']}")
+            click.echo(f"  Files: {result['files_found']}")
+            size_mb = result['bytes_found'] / (1024 * 1024)
+            click.echo(f"  Size:  {size_mb:.2f} MB")
+            procs = result["locking_processes"]
+            if procs:
+                click.echo(f"  Locking processes to terminate: {len(procs)}")
+                for p in procs:
+                    click.echo(f"    - PID {p['pid']} ({p['name']})")
+            else:
+                click.echo("  No active locks detected in directory.")
+        sys.exit(0)
+
+    if not yes and not json_mode:
+        if not click.confirm(f"Are you sure you want to release locks and delete '{path}'?"):
+            click.echo("Aborted.")
+            sys.exit(1)
+
+    result = clean_directory(path, force=force, timeout=timeout, dry_run=False)
+    if json_mode:
+        click.echo(json.dumps(result, indent=2))
+    else:
+        if result["success"]:
+            mb = result["bytes_freed"] / (1024 * 1024)
+            click.echo(f"Successfully deleted {path} ({result['files_deleted']} files, {mb:.2f} MB freed).")
+        else:
+            click.echo(f"Failed to delete directory: {result.get('error', 'Unknown error')}", err=True)
             sys.exit(1)
 
 

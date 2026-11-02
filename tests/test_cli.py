@@ -93,6 +93,25 @@ def test_cli_tree_json():
         assert data["locked_count"] == 0
 
 
+def test_cli_clean_dry_run():
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        result = runner.invoke(cli, ["clean", temp_dir, "--dry-run"])
+        assert result.exit_code == 0
+        assert "Dry run for directory:" in result.output
+
+
+def test_cli_clean_actual():
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as base_dir:
+        target = os.path.join(base_dir, "del_me")
+        os.makedirs(target)
+        result = runner.invoke(cli, ["clean", target, "--yes"])
+        assert result.exit_code == 0
+        assert "Successfully deleted" in result.output
+        assert not os.path.exists(target)
+
+
 def test_cli_menu_status():
     runner = CliRunner()
     result = runner.invoke(cli, ["menu", "status"])

@@ -5,14 +5,38 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "who-locked"
 version = "0.2.0"
-description = "Fast Windows file lock inspector and release CLI."
+description = "Fast Windows file lock inspector, release, and clean CLI."
 readme = "README.md"
 requires-python = ">=3.9"
+authors = [
+    { name = "negg0s" }
+]
 license = { text = "MIT" }
+keywords = ["windows", "locks", "restart-manager", "cli", "file-locks", "sysinternals", "process-tuner"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Utilities",
+]
 dependencies = [
     "click>=8.0",
     "psutil>=5.9",
 ]
+
+[project.urls]
+Homepage = "https://github.com/negg0s/who-locked"
+Repository = "https://github.com/negg0s/who-locked.git"
+Issues = "https://github.com/negg0s/who-locked/issues"
 
 [project.scripts]
 who-locked = "who_locked.cli:cli"

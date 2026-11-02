@@ -3,6 +3,7 @@ import psutil
 
 from .models import LockingProcess
 from .restart_manager import RM_APP_STATUSES, RM_APP_TYPES, RM_PROCESS_INFO
+from .safety import is_safe_to_terminate
 
 
 def enrich_process_info(raw: RM_PROCESS_INFO) -> LockingProcess:
@@ -84,6 +85,10 @@ def terminate_pid(pid: int, force: bool = False, timeout: float = 3.0) -> Tuple[
 
     Returns a tuple of (success, message).
     """
+    safe, reason = is_safe_to_terminate(pid)
+    if not safe:
+        return False, f"Refused to terminate: {reason}"
+
     try:
         proc = psutil.Process(pid)
     except psutil.NoSuchProcess:
@@ -92,6 +97,9 @@ def terminate_pid(pid: int, force: bool = False, timeout: float = 3.0) -> Tuple[
         return False, f"Access denied for PID {pid}. Administrator rights may be needed."
 
     proc_name = proc.name()
+    safe, reason = is_safe_to_terminate(pid, proc_name)
+    if not safe:
+        return False, f"Refused to terminate: {reason}"
 
     try:
         if force:

@@ -1,4 +1,6 @@
 import os
+import shutil
+import stat
 import time
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 
@@ -182,6 +184,89 @@ def release_locks(target_path: str, force: bool = False, timeout: float = 3.0) -
         "results": results,
         "remaining_locks": len(final_report.locking_processes),
     }
+
+
+def _remove_readonly(func, path, exc_info):
+    """Clear readonly bit and retry deletion for Windows files."""
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except Exception:
+        pass
+
+
+def clean_directory(
+    target_dir: str,
+    force: bool = False,
+    timeout: float = 3.0,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Release locks inside a directory and delete it recursively."""
+    abs_dir = os.path.abspath(target_dir)
+    if not os.path.exists(abs_dir):
+        return {"target_path": abs_dir, "success": False, "error": "Path does not exist"}
+    if not os.path.isdir(abs_dir):
+        return {"target_path": abs_dir, "success": False, "error": "Target is not a directory"}
+
+    # Count files and size
+    file_count = 0
+    total_bytes = 0
+    for root, _, files in os.walk(abs_dir):
+        for f in files:
+            fp = os.path.join(root, f)
+            file_count += 1
+            try:
+                total_bytes += os.path.getsize(fp)
+            except OSError:
+                pass
+
+    # Find all locks
+    report = scan_directory_tree(abs_dir, max_files=5000)
+    pids_to_kill: Dict[int, str] = {}
+    for entry in report.locked_entries:
+        for p in entry.locking_processes:
+            pids_to_kill[p.pid] = p.name
+
+    if dry_run:
+        return {
+            "target_path": abs_dir,
+            "dry_run": True,
+            "success": True,
+            "files_found": file_count,
+            "bytes_found": total_bytes,
+            "locking_processes": [{"pid": pid, "name": name} for pid, name in pids_to_kill.items()],
+        }
+
+    # Terminate locking processes
+    term_results = []
+    for pid in pids_to_kill:
+        success, msg = terminate_pid(pid, force=force, timeout=timeout)
+        term_results.append({"pid": pid, "success": success, "message": msg})
+
+    time.sleep(0.1)
+
+    # Remove directory
+    try:
+        shutil.rmtree(abs_dir, onerror=_remove_readonly)
+        deleted = not os.path.exists(abs_dir)
+        return {
+            "target_path": abs_dir,
+            "dry_run": False,
+            "success": deleted,
+            "files_deleted": file_count,
+            "bytes_freed": total_bytes,
+            "terminated_processes": term_results,
+        }
+    except Exception as exc:
+        return {
+            "target_path": abs_dir,
+            "dry_run": False,
+            "success": False,
+            "error": str(exc),
+            "files_deleted": 0,
+            "bytes_freed": 0,
+            "terminated_processes": term_results,
+        }
 
 
 def wait_for_release(

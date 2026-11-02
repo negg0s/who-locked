@@ -6,6 +6,7 @@ import time
 import pytest
 
 from who_locked.core import (
+    clean_directory,
     collect_paths_to_check,
     inspect_locks,
     release_locks,
@@ -155,6 +156,32 @@ def test_scan_directory_tree_with_lock():
             assert len(report.locked_entries) >= 1
             rel_paths = [e.relative_path.replace("\\", "/") for e in report.locked_entries]
             assert "sub/test.txt" in rel_paths
+
+
+def test_clean_directory_dry_run():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        f1 = os.path.join(temp_dir, "f1.txt")
+        with open(f1, "w") as f:
+            f.write("content")
+
+        res = clean_directory(temp_dir, dry_run=True)
+        assert res["dry_run"] is True
+        assert res["success"] is True
+        assert res["files_found"] == 1
+        assert os.path.exists(temp_dir)
+
+
+def test_clean_directory_actual():
+    with tempfile.TemporaryDirectory() as base_dir:
+        target = os.path.join(base_dir, "to_delete")
+        os.makedirs(target)
+        with open(os.path.join(target, "file.txt"), "w") as f:
+            f.write("data")
+
+        res = clean_directory(target, dry_run=False)
+        assert res["success"] is True
+        assert res["files_deleted"] == 1
+        assert not os.path.exists(target)
 
 
 def test_watch_lock_events_initial():

@@ -3,7 +3,7 @@
 [![CI](https://github.com/negg0s/who-locked/actions/workflows/ci.yml/badge.svg)](https://github.com/negg0s/who-locked/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A Windows command-line utility for finding which processes are holding locks on a file or folder. It can inspect open handles through the Windows Restart Manager API, scan directory trees for locked sub-files, monitor lock transitions in real time, or terminate the offending processes.
+A Windows command-line utility for finding which processes are holding locks on a file or folder. It can inspect open handles through the Windows Restart Manager API, scan directory trees for locked sub-files, monitor lock transitions in real time, or terminate the offending processes and clean stubborn directories.
 
 Requirements: Windows 10 or newer, Python 3.9 or newer.
 
@@ -99,6 +99,28 @@ Found 2 locked item(s):
       -> PID 4410 (node.exe, Console, 88.5 MB, parent: cmd.exe)
 ```
 
+## Cleaning stubborn directories
+
+When `rmdir /s /q` or `Remove-Item -Recurse -Force` fails because a background process is holding onto a file, use `clean`:
+
+```powershell
+who-locked clean "C:\projects\my-app\node_modules"
+```
+
+This scans the folder tree for locks, prompts to terminate any locking processes, waits for handles to close, and deletes the directory.
+
+Use `--dry-run` to preview without making any changes:
+
+```powershell
+who-locked clean "C:\projects\my-app\node_modules" --dry-run
+```
+
+Use `-y` or `--yes` to proceed without prompts:
+
+```powershell
+who-locked clean "C:\projects\my-app\node_modules" --yes
+```
+
 ## Real-time lock monitoring
 
 Watch a file or folder and track when locks are acquired and released:
@@ -140,6 +162,13 @@ If a process ignores graceful termination, pass `-f` or `--force`:
 ```powershell
 who-locked release "C:\path\to\locked_file.txt" --force --yes
 ```
+
+## Safety guardrails
+
+`who-locked` includes built-in protections against accidental system instability:
+- Refuses to terminate protected system kernel processes (PID 0, PID 4).
+- Refuses to terminate critical Windows processes (`smss.exe`, `csrss.exe`, `wininit.exe`, `winlogon.exe`, `services.exe`, `lsass.exe`).
+- Refuses to terminate its own process.
 
 ## Waiting for locks to clear
 
@@ -192,13 +221,6 @@ Environment Diagnostics:
 
 System is ready for lock inspection.
 ```
-
-## What it does and does not do
-
-- It queries the official Windows Restart Manager session API to detect applications, services, and Explorer handles.
-- It can scan single files, directory handles, and recursively locate locked files across directories.
-- It does not install kernel filter drivers or hook system calls.
-- Terminating system-critical processes or services owned by other users may require running PowerShell as Administrator.
 
 ## Development
 
