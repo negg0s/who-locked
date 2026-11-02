@@ -186,6 +186,31 @@ def test_cli_completion():
     assert "complete -F" in res_bash.output
 
 
+def test_cli_trace_and_stats():
+    runner = CliRunner()
+    with tempfile.NamedTemporaryFile(delete=False) as target_f:
+        target_path = target_f.name
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".jsonl") as trace_f:
+        trace_path = trace_f.name
+
+    try:
+        res = runner.invoke(cli, ["trace", target_path, "-o", trace_path, "-d", "0.2", "-i", "0.05", "--json"])
+        assert res.exit_code == 0
+        data = json.loads(res.output)
+        assert data["duration_sec"] == 0.2
+
+        res_stats = runner.invoke(cli, ["stats", trace_path, "--json"])
+        assert res_stats.exit_code == 0
+        stats_data = json.loads(res_stats.output)
+        assert "total_events" in stats_data
+    finally:
+        if os.path.exists(target_path):
+            os.remove(target_path)
+        if os.path.exists(trace_path):
+            os.remove(trace_path)
+
+
 def test_cli_close_handle_free_file():
     runner = CliRunner()
     with tempfile.NamedTemporaryFile(delete=False) as f:

@@ -3,7 +3,7 @@
 [![CI](https://github.com/negg0s/who-locked/actions/workflows/ci.yml/badge.svg)](https://github.com/negg0s/who-locked/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A Windows command-line utility for finding which processes are holding locks on a file or folder. It can inspect open handles through the Windows Restart Manager API, decode access rights, close specific file handles without killing processes, benchmark query latency, scan directory trees, monitor lock transitions in real time, launch an interactive terminal UI, or terminate offending processes and clean stubborn directories.
+A Windows command-line utility for finding which processes are holding locks on a file or folder. It can inspect open handles through the Windows Restart Manager API, decode access rights, close specific file handles without killing processes, record lock timelines to JSONL, compute duration statistics, benchmark query latency, scan directory trees, monitor lock transitions in real time, launch an interactive terminal UI, or terminate offending processes and clean stubborn directories.
 
 Requirements: Windows 10 or newer, Python 3.9 or newer.
 
@@ -17,7 +17,7 @@ The action can't be completed because the file is open in another program
 
 it often does not say which process is responsible. Developers encounter this when removing `node_modules`, deleting virtual environments, clearing build caches, or overwriting binary outputs.
 
-`who-locked` queries the Windows Restart Manager API (`rstrtmgr.dll`) and NT system handle tables (`ntdll.dll`) to find exact processes, decode access masks, and close individual file handles.
+`who-locked` queries the Windows Restart Manager API (`rstrtmgr.dll`) and NT system handle tables (`ntdll.dll`) to find exact processes, decode access masks, record lock durations, and close individual file handles.
 
 ## Install
 
@@ -100,6 +100,39 @@ Skip confirmation prompt:
 
 ```powershell
 who-locked close-handle "C:\path\to\locked_file.txt" --yes
+```
+
+## Recording lock timelines (tracing)
+
+Record lock acquisition and release events over time to a structured JSONL file during builds, tests, or compiler runs:
+
+```powershell
+who-locked trace "C:\src\app\build\output.bin" --duration 15.0 --output build_locks.jsonl
+```
+
+Analyze hold duration and find worst-case contention:
+
+```powershell
+who-locked stats build_locks.jsonl
+```
+
+Example output:
+
+```text
+Trace Analysis: C:\src\app\build_locks.jsonl
+  Total events recorded: 14
+  Lock-release cycles:   7
+  Total locked time:     1480.5 ms
+
+Hold Duration (ms):
+  Min:    42.10
+  Median: 112.50
+  p95:    380.20
+  Max:    420.00
+
+Top Locking Processes:
+  - cl.exe: 5 lock cycle(s)
+  - link.exe: 2 lock cycle(s)
 ```
 
 ## Interactive terminal UI (TUI)

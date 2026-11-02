@@ -21,6 +21,7 @@ from .doctor import run_diagnostics
 from .handle_ops import close_target_file_handles, get_process_file_handle_details
 from .html_report import render_html_report
 from .models import LockReport, TreeReport
+from .trace import analyze_lock_trace, record_lock_trace
 from .tui import run_tui
 
 
@@ -329,6 +330,52 @@ def bench_cmd(samples: int, json_mode: bool) -> None:
     click.echo(f"System handles scanned: {res['total_system_handles']:,} (~{res['handles_per_second']:,} handles/sec)")
 
 
+@cli.command("trace")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("-o", "--output", default="lock_trace.jsonl", show_default=True, help="Output JSONL trace path.")
+@click.option("-d", "--duration", default=10.0, show_default=True, help="Recording duration in seconds.")
+@click.option("-i", "--interval", default=0.1, show_default=True, help="Sampling interval in seconds.")
+@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON summary.")
+def trace_cmd(path: str, output: str, duration: float, interval: float, json_mode: bool) -> None:
+    """Record lock acquisition and release timeline to a JSONL trace file."""
+    if not json_mode:
+        click.echo(f"Recording lock trace for '{path}' ({duration}s at {interval}s interval)...")
+    res = record_lock_trace(path, output_path=output, duration=duration, interval=interval)
+    if json_mode:
+        click.echo(json.dumps(res, indent=2))
+    else:
+        click.echo(f"Trace completed: {res['events_recorded']} events saved to '{res['output_path']}'.")
+
+
+@cli.command("stats")
+@click.argument("trace_path", type=click.Path(exists=True))
+@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
+def stats_cmd(trace_path: str, json_mode: bool) -> None:
+    """Analyze a JSONL lock trace and compute hold duration statistics."""
+    data = analyze_lock_trace(trace_path)
+    if json_mode:
+        click.echo(json.dumps(data, indent=2))
+        return
+
+    click.echo(f"Trace Analysis: {data['trace_file']}")
+    click.echo(f"  Total events recorded: {data['total_events']}")
+    click.echo(f"  Lock-release cycles:   {data['lock_cycles_count']}")
+    click.echo(f"  Total locked time:     {data['total_locked_time_ms']} ms")
+
+    st = data["hold_duration_stats_ms"]
+    click.echo("\nHold Duration (ms):")
+    click.echo(f"  Min:    {st['min']}")
+    click.echo(f"  Median: {st['median']}")
+    click.echo(f"  p95:    {st['p95']}")
+    click.echo(f"  Max:    {st['max']}")
+
+    procs = data.get("top_locking_processes", [])
+    if procs:
+        click.echo("\nTop Locking Processes:")
+        for p in procs:
+            click.echo(f"  - {p['name']}: {p['lock_count']} lock cycle(s)")
+
+
 @cli.command("watch")
 @click.argument("path", type=click.Path())
 @click.option("-i", "--interval", default=0.5, show_default=True, help="Polling interval in seconds.")
@@ -503,7 +550,7 @@ def completion_cmd(shell: str) -> None:
         click.echo(
             'Register-ArgumentCompleter -Native -CommandName who-locked -ScriptBlock {\n'
             '    param($wordToComplete, $commandAst, $cursorPosition)\n'
-            "    $cmds = @('inspect', 'tree', 'find', 'tui', 'bench', 'close-handle', 'clean', 'watch', 'release', 'wait', 'menu', 'doctor', 'completion')\n"
+            "    $cmds = @('inspect', 'tree', 'find', 'tui', 'bench', 'trace', 'stats', 'close-handle', 'clean', 'watch', 'release', 'wait', 'menu', 'doctor', 'completion')\n"
             '    $cmds | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {\n'
             '        [System.Management.Automation.CompletionResult]::new($_, $_, "ParameterValue", $_)\n'
             '    }\n'

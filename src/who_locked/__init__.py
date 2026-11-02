@@ -23,11 +23,13 @@ from .handle_ops import (
 from .html_report import render_html_report
 from .models import LockedFileEntry, LockingProcess, LockReport, TreeReport
 from .safety import CRITICAL_NAMES, PROTECTED_PIDS, is_safe_to_terminate
+from .trace import analyze_lock_trace, record_lock_trace
 from .tui import run_tui
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = [
     "__version__",
+    "analyze_lock_trace",
     "clean_directory",
     "close_process_handle",
     "close_target_file_handles",
@@ -37,6 +39,7 @@ __all__ = [
     "get_all_system_handles",
     "get_process_file_handle_details",
     "inspect_locks",
+    "record_lock_trace",
     "release_locks",
     "release_selected_processes",
     "render_html_report",
