@@ -3,7 +3,7 @@
 [![CI](https://github.com/negg0s/who-locked/actions/workflows/ci.yml/badge.svg)](https://github.com/negg0s/who-locked/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A Windows command-line utility for finding which processes are holding locks on a file or folder. It can inspect open handles through the Windows Restart Manager API, close specific file handles without killing processes, scan directory trees, monitor lock transitions in real time, launch an interactive terminal UI, or terminate offending processes and clean stubborn directories.
+A Windows command-line utility for finding which processes are holding locks on a file or folder. It can inspect open handles through the Windows Restart Manager API, decode access rights, close specific file handles without killing processes, benchmark query latency, scan directory trees, monitor lock transitions in real time, launch an interactive terminal UI, or terminate offending processes and clean stubborn directories.
 
 Requirements: Windows 10 or newer, Python 3.9 or newer.
 
@@ -17,7 +17,7 @@ The action can't be completed because the file is open in another program
 
 it often does not say which process is responsible. Developers encounter this when removing `node_modules`, deleting virtual environments, clearing build caches, or overwriting binary outputs.
 
-`who-locked` queries the Windows Restart Manager API (`rstrtmgr.dll`) and NT system handle tables (`ntdll.dll`) to find exact processes and close individual file handles.
+`who-locked` queries the Windows Restart Manager API (`rstrtmgr.dll`) and NT system handle tables (`ntdll.dll`) to find exact processes, decode access masks, and close individual file handles.
 
 ## Install
 
@@ -52,15 +52,21 @@ PID      NAME                     TYPE           MEMORY       USER
 14820    app.exe                  Console        48.2 MB      DESKTOP\user
 ```
 
-Add `--verbose` to view full executable paths, parent processes, and command-line arguments:
+Add `--verbose` to view full executable paths, parent processes, command-line arguments, and decoded handle access rights (e.g. `READ | WRITE | DELETE`):
 
 ```powershell
 who-locked inspect "C:\path\to\locked_file.txt" --verbose
 ```
 
-Output formats for scripts, pipelines, and reporting:
+Output formats for scripts, pipelines, markdown reports, and web inspection:
 
 ```powershell
+# GitHub-flavored Markdown table:
+who-locked inspect "C:\path\to\locked_file.txt" --format markdown
+
+# Standalone dark-mode HTML report:
+who-locked inspect "C:\path\to\locked_file.txt" --format html > report.html
+
 # JSON format:
 who-locked inspect "C:\path\to\locked_file.txt" --format json
 
@@ -69,9 +75,6 @@ who-locked inspect "C:\path\to\locked_file.txt" --format pids
 
 # CSV format:
 who-locked inspect "C:\path\to\locked_file.txt" --format csv
-
-# Standalone dark-mode HTML report:
-who-locked inspect "C:\path\to\locked_file.txt" --format html > report.html
 
 # Quiet mode (exit code only: 0=free, 1=locked, 2=error):
 who-locked inspect "C:\path\to\locked_file.txt" -q
@@ -113,6 +116,28 @@ Controls:
 - `x`: Terminate selected process
 - `r`: Refresh lock inspection
 - `q` / `Esc`: Exit dashboard
+
+## Benchmarking lock query latency
+
+Measure the latency and throughput of Windows lock inspection APIs on your machine:
+
+```powershell
+who-locked bench --samples 50
+```
+
+Example output:
+
+```text
+Running benchmark (50 samples)...
+
+Benchmark Results:
+Operation                  Min (ms)   Median (ms)    p95 (ms)   Max (ms)
+------------------------------------------------------------------------
+Restart Manager Query      0.342      0.485          0.720      1.180
+NT Handle Table Scan       3.812      4.120          4.950      6.240
+------------------------------------------------------------------------
+System handles scanned: 168,420 (~40,878 handles/sec)
+```
 
 ## Finding files by process name or PID
 

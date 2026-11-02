@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import ctypes
 import os
 import sys
@@ -12,6 +13,7 @@ else:
         USHORT = ctypes.c_uint16
         BOOL = ctypes.c_int
         HANDLE = ctypes.c_void_p
+        LPWSTR = ctypes.c_wchar_p
 
     wintypes = _WinTypesFallback()  # type: ignore
 
@@ -33,6 +35,42 @@ class SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX(ctypes.Structure):
         ("HandleAttributes", wintypes.ULONG),
         ("Reserved", wintypes.ULONG),
     ]
+
+
+@dataclass
+class HandleInfo:
+    """Detailed metadata for an active handle."""
+
+    handle_value: int
+    granted_access: int
+    access_rights: List[str]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "handle_value": hex(self.handle_value),
+            "granted_access": hex(self.granted_access),
+            "access_rights": self.access_rights,
+        }
+
+
+def decode_access_mask(mask: int) -> List[str]:
+    """Decode Win32 file access mask into human-readable flags."""
+    rights = []
+    if mask & 0x0001:
+        rights.append("READ")
+    if mask & 0x0002:
+        rights.append("WRITE")
+    if mask & 0x0004:
+        rights.append("APPEND")
+    if mask & 0x0020:
+        rights.append("EXECUTE")
+    if mask & 0x00010000:
+        rights.append("DELETE")
+    if mask & 0x00020000:
+        rights.append("READ_CONTROL")
+    if mask & 0x00100000:
+        rights.append("SYNCHRONIZE")
+    return rights or ["UNKNOWN"]
 
 
 def _setup_apis():
@@ -104,8 +142,8 @@ def get_all_system_handles() -> Tuple[Optional[ctypes.Array], int]:
     return buf, num_handles
 
 
-def find_file_handles_in_process(pid: int, target_path: str) -> List[int]:
-    """Find handle values in a target process that reference the target file path."""
+def get_process_file_handle_details(pid: int, target_path: str) -> List[HandleInfo]:
+    """Find handle metadata in a target process that reference the target file path."""
     if sys.platform != "win32":
         return []
 
@@ -125,7 +163,7 @@ def find_file_handles_in_process(pid: int, target_path: str) -> List[int]:
     norm_target = os.path.normcase(os.path.abspath(target_path))
     entry_size = ctypes.sizeof(SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX)
     path_buf = (ctypes.c_wchar * 1024)()
-    matching_handles: List[int] = []
+    details: List[HandleInfo] = []
 
     try:
         for i in range(num_handles):
@@ -149,12 +187,25 @@ def find_file_handles_in_process(pid: int, target_path: str) -> List[int]:
                         if path_str.startswith("\\\\?\\"):
                             path_str = path_str[4:]
                         if os.path.normcase(path_str) == norm_target:
-                            matching_handles.append(entry.HandleValue)
+                            rights = decode_access_mask(entry.GrantedAccess)
+                            details.append(
+                                HandleInfo(
+                                    handle_value=entry.HandleValue,
+                                    granted_access=entry.GrantedAccess,
+                                    access_rights=rights,
+                                )
+                            )
                     kernel32.CloseHandle(dup)
     finally:
         kernel32.CloseHandle(h_proc)
 
-    return matching_handles
+    return details
+
+
+def find_file_handles_in_process(pid: int, target_path: str) -> List[int]:
+    """Find handle values in a target process that reference the target file path."""
+    details = get_process_file_handle_details(pid, target_path)
+    return [d.handle_value for d in details]
 
 
 def close_process_handle(pid: int, handle_value: int) -> bool:

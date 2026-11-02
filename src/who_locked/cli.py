@@ -2,9 +2,10 @@ from datetime import datetime
 import json
 import sys
 import time
-from typing import List, Optional
+from typing import List, Optional, Union
 import click
 
+from .bench import run_benchmark
 from .context_menu import install_context_menu, is_context_menu_installed, uninstall_context_menu
 from .core import (
     clean_directory,
@@ -17,7 +18,7 @@ from .core import (
     watch_lock_events,
 )
 from .doctor import run_diagnostics
-from .handle_ops import close_target_file_handles
+from .handle_ops import close_target_file_handles, get_process_file_handle_details
 from .html_report import render_html_report
 from .models import LockReport, TreeReport
 from .tui import run_tui
@@ -61,8 +62,49 @@ def format_report_text(report: LockReport, verbose: bool = False, color: bool = 
             if proc.cmdline:
                 lines.append(f"         Cmd:    {proc.cmdline}")
 
+            # Query and display handle access rights
+            try:
+                handle_details = get_process_file_handle_details(proc.pid, report.target_path)
+                for h in handle_details:
+                    rights_str = " | ".join(h.access_rights)
+                    lines.append(f"         Handle: {hex(h.handle_value)} (Access: {rights_str})")
+            except Exception:
+                pass
+
     if verbose and report.queried_paths:
         lines.append(f"\nQueried resources: {len(report.queried_paths)} file(s)/handle(s)")
+
+    return "\n".join(lines)
+
+
+def format_markdown_report(report: Union[LockReport, TreeReport]) -> str:
+    lines = []
+    if isinstance(report, LockReport):
+        lines.append(f"# Lock Report: `{report.target_path}`\n")
+        status = "**LOCKED**" if report.is_locked else "**FREE**"
+        lines.append(f"- **Status:** {status}")
+        lines.append(f"- **Type:** {'Directory' if report.is_directory else 'File'}")
+        lines.append(f"- **Locking Processes:** {len(report.locking_processes)}\n")
+
+        if report.locking_processes:
+            lines.append("| PID | Name | Type | Memory | User | Executable Path |")
+            lines.append("| --- | --- | --- | --- | --- | --- |")
+            for p in report.locking_processes:
+                mem = f"{p.memory_mb:.1f} MB" if p.memory_mb is not None else "-"
+                lines.append(f"| {p.pid} | {p.name} | {p.app_type} | {mem} | {p.username or '-'} | `{p.exe_path or '-'}` |")
+    else:
+        lines.append(f"# Tree Lock Report: `{report.root_path}`\n")
+        status = "**LOCKED FILES FOUND**" if report.is_locked else "**CLEAN**"
+        lines.append(f"- **Status:** {status}")
+        lines.append(f"- **Files Scanned:** {report.scanned_files_count}")
+        lines.append(f"- **Locked Files:** {len(report.locked_entries)}\n")
+
+        if report.locked_entries:
+            lines.append("| Relative Path | Locking Processes |")
+            lines.append("| --- | --- |")
+            for e in report.locked_entries:
+                p_str = ", ".join(f"{p.name} (PID {p.pid})" for p in e.locking_processes)
+                lines.append(f"| `{e.relative_path}` | {p_str} |")
 
     return "\n".join(lines)
 
@@ -113,7 +155,7 @@ def cli() -> None:
 
 @cli.command("inspect")
 @click.argument("path", type=click.Path())
-@click.option("--format", "output_format", type=click.Choice(["text", "json", "pids", "csv", "html"]), default="text", show_default=True, help="Output format.")
+@click.option("--format", "output_format", type=click.Choice(["text", "json", "pids", "csv", "html", "markdown"]), default="text", show_default=True, help="Output format.")
 @click.option("--json", "json_flag", is_flag=True, help="Shortcut for --format json.")
 @click.option("-v", "--verbose", is_flag=True, help="Show executable paths, parents, and arguments.")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress terminal output.")
@@ -140,6 +182,8 @@ def inspect_cmd(path: str, output_format: str, json_flag: bool, verbose: bool, q
                 click.echo(f'{p.pid},"{p.name}","{p.app_type}","{p.app_status}",{mem},"{p.username or ""}"')
         elif output_format == "html":
             click.echo(render_html_report(report))
+        elif output_format == "markdown":
+            click.echo(format_markdown_report(report))
         else:
             click.echo(format_report_text(report, verbose=verbose, color=not no_color))
 
@@ -154,7 +198,7 @@ def inspect_cmd(path: str, output_format: str, json_flag: bool, verbose: bool, q
 @cli.command("tree")
 @click.argument("path", type=click.Path())
 @click.option("--max-files", default=1000, show_default=True, help="Maximum files to scan.")
-@click.option("--format", "output_format", type=click.Choice(["text", "json", "html"]), default="text", show_default=True, help="Output format.")
+@click.option("--format", "output_format", type=click.Choice(["text", "json", "html", "markdown"]), default="text", show_default=True, help="Output format.")
 @click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
 @click.option("--no-color", is_flag=True, help="Disable ANSI colors.")
 def tree_cmd(path: str, max_files: int, output_format: str, json_mode: bool, no_color: bool) -> None:
@@ -167,6 +211,8 @@ def tree_cmd(path: str, max_files: int, output_format: str, json_mode: bool, no_
         click.echo(json.dumps(report.to_dict(), indent=2))
     elif output_format == "html":
         click.echo(render_html_report(report))
+    elif output_format == "markdown":
+        click.echo(format_markdown_report(report))
     else:
         click.echo(format_tree_text(report, color=not no_color))
 
@@ -212,11 +258,75 @@ def find_cmd(path: str, proc_name: Optional[str], proc_pid: Optional[int], outpu
     sys.exit(1 if matched else 0)
 
 
+@cli.command("close-handle")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--pid", "target_pid", type=int, help="Target specific PID only.")
+@click.option("-y", "--yes", is_flag=True, help="Bypass confirmation prompt.")
+@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
+def close_handle_cmd(path: str, target_pid: Optional[int], yes: bool, json_mode: bool) -> None:
+    """Close file handles directly without terminating locking processes."""
+    report = inspect_locks(path)
+    if not report.is_locked and target_pid is None:
+        if json_mode:
+            click.echo(json.dumps({"target": path, "success": True, "total_closed": 0}))
+        else:
+            click.echo(f"No active locks found on {path}.")
+        sys.exit(0)
+
+    pids = [target_pid] if target_pid else [p.pid for p in report.locking_processes]
+
+    if not yes and not json_mode:
+        click.echo(f"Attempting to close open handles for: {path}")
+        click.echo(f"Target process PIDs: {', '.join(str(p) for p in pids)}")
+        click.echo("Warning: Closing handles directly can make the target application unstable.")
+        if not click.confirm("Proceed with closing handles?"):
+            click.echo("Aborted.")
+            sys.exit(1)
+
+    result = close_target_file_handles(path, pids=pids)
+
+    if json_mode:
+        click.echo(json.dumps(result, indent=2))
+    else:
+        if result["total_closed"] > 0:
+            click.echo(f"Successfully closed {result['total_closed']} handle(s) across {len(result['details'])} process(es).")
+            click.echo("Processes remain running.")
+        else:
+            click.echo("No matching file handles could be closed.", err=True)
+
+    sys.exit(0 if result["success"] else 1)
+
+
 @cli.command("tui")
 @click.argument("path", type=click.Path(exists=True))
 def tui_cmd(path: str) -> None:
     """Launch interactive terminal UI to inspect and manage locks."""
     run_tui(path)
+
+
+@cli.command("bench")
+@click.option("-s", "--samples", default=30, show_default=True, help="Number of benchmark iterations.")
+@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
+def bench_cmd(samples: int, json_mode: bool) -> None:
+    """Benchmark latency and throughput of Windows lock query APIs."""
+    if not json_mode:
+        click.echo(f"Running benchmark ({samples} samples)...")
+    res = run_benchmark(samples=samples)
+
+    if json_mode:
+        click.echo(json.dumps(res, indent=2))
+        sys.exit(0)
+
+    rm = res["restart_manager_ms"]
+    nt = res["nt_handle_scan_ms"]
+
+    click.echo("\nBenchmark Results:")
+    click.echo(f"{'Operation':<26} {'Min (ms)':<10} {'Median (ms)':<14} {'p95 (ms)':<10} {'Max (ms)'}")
+    click.echo("-" * 72)
+    click.echo(f"{'Restart Manager Query':<26} {rm['min']:<10.3f} {rm['median']:<14.3f} {rm['p95']:<10.3f} {rm['max']:.3f}")
+    click.echo(f"{'NT Handle Table Scan':<26} {nt['min']:<10.3f} {nt['median']:<14.3f} {nt['p95']:<10.3f} {nt['max']:.3f}")
+    click.echo("-" * 72)
+    click.echo(f"System handles scanned: {res['total_system_handles']:,} (~{res['handles_per_second']:,} handles/sec)")
 
 
 @cli.command("watch")
@@ -321,45 +431,6 @@ def release_cmd(path: str, force: bool, timeout: float, yes: bool, interactive: 
     sys.exit(0 if result["success"] else 1)
 
 
-@cli.command("close-handle")
-@click.argument("path", type=click.Path(exists=True))
-@click.option("--pid", "target_pid", type=int, help="Target specific PID only.")
-@click.option("-y", "--yes", is_flag=True, help="Bypass confirmation prompt.")
-@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
-def close_handle_cmd(path: str, target_pid: Optional[int], yes: bool, json_mode: bool) -> None:
-    """Close file handles directly without terminating locking processes."""
-    report = inspect_locks(path)
-    if not report.is_locked and target_pid is None:
-        if json_mode:
-            click.echo(json.dumps({"target": path, "success": True, "total_closed": 0}))
-        else:
-            click.echo(f"No active locks found on {path}.")
-        sys.exit(0)
-
-    pids = [target_pid] if target_pid else [p.pid for p in report.locking_processes]
-
-    if not yes and not json_mode:
-        click.echo(f"Attempting to close open handles for: {path}")
-        click.echo(f"Target process PIDs: {', '.join(str(p) for p in pids)}")
-        click.echo("Warning: Closing handles directly can make the target application unstable.")
-        if not click.confirm("Proceed with closing handles?"):
-            click.echo("Aborted.")
-            sys.exit(1)
-
-    result = close_target_file_handles(path, pids=pids)
-
-    if json_mode:
-        click.echo(json.dumps(result, indent=2))
-    else:
-        if result["total_closed"] > 0:
-            click.echo(f"Successfully closed {result['total_closed']} handle(s) across {len(result['details'])} process(es).")
-            click.echo("Processes remain running.")
-        else:
-            click.echo("No matching file handles could be closed.", err=True)
-
-    sys.exit(0 if result["success"] else 1)
-
-
 @cli.command("clean")
 @click.argument("path", type=click.Path(exists=True, file_okay=False, dir_okay=True))
 @click.option("-y", "--yes", is_flag=True, help="Bypass confirmation prompt.")
@@ -432,7 +503,7 @@ def completion_cmd(shell: str) -> None:
         click.echo(
             'Register-ArgumentCompleter -Native -CommandName who-locked -ScriptBlock {\n'
             '    param($wordToComplete, $commandAst, $cursorPosition)\n'
-            "    $cmds = @('inspect', 'tree', 'find', 'tui', 'close-handle', 'clean', 'watch', 'release', 'wait', 'menu', 'doctor', 'completion')\n"
+            "    $cmds = @('inspect', 'tree', 'find', 'tui', 'bench', 'close-handle', 'clean', 'watch', 'release', 'wait', 'menu', 'doctor', 'completion')\n"
             '    $cmds | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {\n'
             '        [System.Management.Automation.CompletionResult]::new($_, $_, "ParameterValue", $_)\n'
             '    }\n'
@@ -443,7 +514,7 @@ def completion_cmd(shell: str) -> None:
             '_who_locked_completion() {\n'
             '    local cur prev words cword\n'
             '    _init_completion || return\n'
-            '    local commands="inspect tree find tui clean watch release wait menu doctor completion"\n'
+            '    local commands="inspect tree find tui bench close-handle clean watch release wait menu doctor completion"\n'
             '    if [[ $cword -eq 1 ]]; then\n'
             '        COMPREPLY=( $(compgen -W "$commands" -- "$cur") )\n'
             '    fi\n'

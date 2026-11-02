@@ -138,6 +138,35 @@ def test_cli_inspect_html():
             os.remove(temp_name)
 
 
+def test_cli_inspect_markdown():
+    runner = CliRunner()
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        temp_name = f.name
+    try:
+        result = runner.invoke(cli, ["inspect", temp_name, "--format", "markdown"])
+        assert result.exit_code == 0
+        assert "# Lock Report:" in result.output
+        assert "**FREE**" in result.output
+    finally:
+        if os.path.exists(temp_name):
+            os.remove(temp_name)
+
+
+def test_cli_bench():
+    runner = CliRunner()
+    result = runner.invoke(cli, ["bench", "--samples", "2"])
+    assert result.exit_code == 0
+    assert "Benchmark Results:" in result.output
+
+
+def test_cli_bench_json():
+    runner = CliRunner()
+    result = runner.invoke(cli, ["bench", "--samples", "2", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert "restart_manager_ms" in data
+
+
 def test_cli_find_empty():
     runner = CliRunner()
     with tempfile.TemporaryDirectory() as temp_dir:
