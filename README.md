@@ -3,7 +3,7 @@
 [![CI](https://github.com/negg0s/who-locked/actions/workflows/ci.yml/badge.svg)](https://github.com/negg0s/who-locked/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A Windows command-line utility for finding which processes are holding locks on a file or folder. It can inspect open handles through the Windows Restart Manager API, scan directory trees for locked sub-files, monitor lock transitions in real time, or terminate offending processes and clean stubborn directories.
+A Windows command-line utility for finding which processes are holding locks on a file or folder. It can inspect open handles through the Windows Restart Manager API, scan directory trees, monitor lock transitions in real time, launch an interactive terminal UI, or terminate offending processes and clean stubborn directories.
 
 Requirements: Windows 10 or newer, Python 3.9 or newer.
 
@@ -58,7 +58,7 @@ Add `--verbose` to view full executable paths, parent processes, and command-lin
 who-locked inspect "C:\path\to\locked_file.txt" --verbose
 ```
 
-Output formats for scripts and pipelines:
+Output formats for scripts, pipelines, and reporting:
 
 ```powershell
 # JSON format:
@@ -70,6 +70,9 @@ who-locked inspect "C:\path\to\locked_file.txt" --format pids
 # CSV format:
 who-locked inspect "C:\path\to\locked_file.txt" --format csv
 
+# Standalone dark-mode HTML report:
+who-locked inspect "C:\path\to\locked_file.txt" --format html > report.html
+
 # Quiet mode (exit code only: 0=free, 1=locked, 2=error):
 who-locked inspect "C:\path\to\locked_file.txt" -q
 ```
@@ -78,6 +81,30 @@ Example pipe into PowerShell process termination:
 
 ```powershell
 who-locked inspect "C:\path\to\locked_file.txt" --format pids | Stop-Process -Force
+```
+
+## Interactive terminal UI (TUI)
+
+Launch a console dashboard to navigate active locks and terminate processes with single keystrokes:
+
+```powershell
+who-locked tui "C:\projects\my-app\node_modules"
+```
+
+Controls:
+- `Up` / `Down`: Navigate process list
+- `x`: Terminate selected process
+- `r`: Refresh lock inspection
+- `q` / `Esc`: Exit dashboard
+
+## Finding files by process name or PID
+
+When a known process (such as `node.exe` or `java.exe`) is hanging, find every file it holds across a directory tree:
+
+```powershell
+who-locked find "C:\projects\my-app" --process node.exe
+# or filter by PID:
+who-locked find "C:\projects\my-app" --pid 9120
 ```
 
 ## Scanning directory trees

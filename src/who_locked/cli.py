@@ -8,6 +8,7 @@ import click
 from .context_menu import install_context_menu, is_context_menu_installed, uninstall_context_menu
 from .core import (
     clean_directory,
+    find_locks_by_process,
     inspect_locks,
     release_locks,
     release_selected_processes,
@@ -16,7 +17,9 @@ from .core import (
     watch_lock_events,
 )
 from .doctor import run_diagnostics
+from .html_report import render_html_report
 from .models import LockReport, TreeReport
+from .tui import run_tui
 
 
 def format_report_text(report: LockReport, verbose: bool = False, color: bool = True) -> str:
@@ -109,7 +112,7 @@ def cli() -> None:
 
 @cli.command("inspect")
 @click.argument("path", type=click.Path())
-@click.option("--format", "output_format", type=click.Choice(["text", "json", "pids", "csv"]), default="text", show_default=True, help="Output format.")
+@click.option("--format", "output_format", type=click.Choice(["text", "json", "pids", "csv", "html"]), default="text", show_default=True, help="Output format.")
 @click.option("--json", "json_flag", is_flag=True, help="Shortcut for --format json.")
 @click.option("-v", "--verbose", is_flag=True, help="Show executable paths, parents, and arguments.")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress terminal output.")
@@ -134,6 +137,8 @@ def inspect_cmd(path: str, output_format: str, json_flag: bool, verbose: bool, q
             for p in report.locking_processes:
                 mem = f"{p.memory_mb:.1f}" if p.memory_mb is not None else ""
                 click.echo(f'{p.pid},"{p.name}","{p.app_type}","{p.app_status}",{mem},"{p.username or ""}"')
+        elif output_format == "html":
+            click.echo(render_html_report(report))
         else:
             click.echo(format_report_text(report, verbose=verbose, color=not no_color))
 
@@ -148,13 +153,19 @@ def inspect_cmd(path: str, output_format: str, json_flag: bool, verbose: bool, q
 @cli.command("tree")
 @click.argument("path", type=click.Path())
 @click.option("--max-files", default=1000, show_default=True, help="Maximum files to scan.")
+@click.option("--format", "output_format", type=click.Choice(["text", "json", "html"]), default="text", show_default=True, help="Output format.")
 @click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
 @click.option("--no-color", is_flag=True, help="Disable ANSI colors.")
-def tree_cmd(path: str, max_files: int, json_mode: bool, no_color: bool) -> None:
+def tree_cmd(path: str, max_files: int, output_format: str, json_mode: bool, no_color: bool) -> None:
     """Scan a directory tree and list every individual locked file."""
-    report = scan_directory_tree(path, max_files=max_files)
     if json_mode:
+        output_format = "json"
+
+    report = scan_directory_tree(path, max_files=max_files)
+    if output_format == "json":
         click.echo(json.dumps(report.to_dict(), indent=2))
+    elif output_format == "html":
+        click.echo(render_html_report(report))
     else:
         click.echo(format_tree_text(report, color=not no_color))
 
@@ -164,6 +175,47 @@ def tree_cmd(path: str, max_files: int, json_mode: bool, no_color: bool) -> None
         sys.exit(1)
     else:
         sys.exit(0)
+
+
+@cli.command("find")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("-p", "--process", "proc_name", help="Filter by process name (substring match).")
+@click.option("--pid", "proc_pid", type=int, help="Filter by specific PID.")
+@click.option("--format", "output_format", type=click.Choice(["text", "json", "pids"]), default="text", show_default=True, help="Output format.")
+@click.option("--max-files", default=1000, show_default=True, help="Max files to scan.")
+def find_cmd(path: str, proc_name: Optional[str], proc_pid: Optional[int], output_format: str, max_files: int) -> None:
+    """Find files in a directory locked by a specific process name or PID."""
+    if not proc_name and proc_pid is None:
+        click.echo("Error: Provide --process or --pid to filter locks.", err=True)
+        sys.exit(2)
+
+    matched = find_locks_by_process(path, process_name=proc_name, pid=proc_pid, max_files=max_files)
+
+    if output_format == "json":
+        data = [e.to_dict() for e in matched]
+        click.echo(json.dumps(data, indent=2))
+    elif output_format == "pids":
+        pids = set()
+        for e in matched:
+            for p in e.locking_processes:
+                pids.add(str(p.pid))
+        if pids:
+            click.echo(" ".join(sorted(pids)))
+    else:
+        filter_str = f"PID {proc_pid}" if proc_pid else f"process '{proc_name}'"
+        click.echo(f"Files in {path} locked by {filter_str}: {len(matched)}\n")
+        for e in matched:
+            procs = ", ".join(f"{p.name} (PID {p.pid})" for p in e.locking_processes)
+            click.echo(f"  * {e.relative_path} -> {procs}")
+
+    sys.exit(1 if matched else 0)
+
+
+@cli.command("tui")
+@click.argument("path", type=click.Path(exists=True))
+def tui_cmd(path: str) -> None:
+    """Launch interactive terminal UI to inspect and manage locks."""
+    run_tui(path)
 
 
 @cli.command("watch")
@@ -340,7 +392,7 @@ def completion_cmd(shell: str) -> None:
         click.echo(
             'Register-ArgumentCompleter -Native -CommandName who-locked -ScriptBlock {\n'
             '    param($wordToComplete, $commandAst, $cursorPosition)\n'
-            "    $cmds = @('inspect', 'tree', 'clean', 'watch', 'release', 'wait', 'menu', 'doctor', 'completion')\n"
+            "    $cmds = @('inspect', 'tree', 'find', 'tui', 'clean', 'watch', 'release', 'wait', 'menu', 'doctor', 'completion')\n"
             '    $cmds | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {\n'
             '        [System.Management.Automation.CompletionResult]::new($_, $_, "ParameterValue", $_)\n'
             '    }\n'
@@ -351,7 +403,7 @@ def completion_cmd(shell: str) -> None:
             '_who_locked_completion() {\n'
             '    local cur prev words cword\n'
             '    _init_completion || return\n'
-            '    local commands="inspect tree clean watch release wait menu doctor completion"\n'
+            '    local commands="inspect tree find tui clean watch release wait menu doctor completion"\n'
             '    if [[ $cword -eq 1 ]]; then\n'
             '        COMPREPLY=( $(compgen -W "$commands" -- "$cur") )\n'
             '    fi\n'

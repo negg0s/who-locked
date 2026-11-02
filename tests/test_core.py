@@ -8,6 +8,7 @@ import pytest
 from who_locked.core import (
     clean_directory,
     collect_paths_to_check,
+    find_locks_by_process,
     inspect_locks,
     release_locks,
     release_selected_processes,
@@ -208,6 +209,12 @@ def test_watch_lock_events_initial():
     finally:
         if os.path.exists(temp_name):
             os.remove(temp_name)
+
+
+def test_find_locks_by_process_empty():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        res = find_locks_by_process(temp_dir, process_name="nonexistent.exe")
+        assert res == []
 
 
 def test_wait_for_release_success():

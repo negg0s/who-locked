@@ -292,6 +292,38 @@ def clean_directory(
         }
 
 
+def find_locks_by_process(
+    target_dir: str,
+    process_name: Optional[str] = None,
+    pid: Optional[int] = None,
+    max_files: int = 1000,
+) -> List[LockedFileEntry]:
+    """Find all files in target_dir locked by a specific process name or PID."""
+    report = scan_directory_tree(target_dir, max_files=max_files)
+    matched_entries = []
+
+    p_filter = process_name.lower().strip() if process_name else None
+
+    for entry in report.locked_entries:
+        matching_procs = []
+        for p in entry.locking_processes:
+            if pid is not None and p.pid == pid:
+                matching_procs.append(p)
+            elif p_filter and (p_filter in p.name.lower() or (p.exe_path and p_filter in p.exe_path.lower())):
+                matching_procs.append(p)
+
+        if matching_procs:
+            matched_entries.append(
+                LockedFileEntry(
+                    path=entry.path,
+                    relative_path=entry.relative_path,
+                    locking_processes=matching_procs,
+                )
+            )
+
+    return matched_entries
+
+
 def wait_for_release(
     target_path: str,
     timeout: float = 10.0,

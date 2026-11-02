@@ -125,6 +125,27 @@ def test_cli_clean_actual():
         assert not os.path.exists(target)
 
 
+def test_cli_inspect_html():
+    runner = CliRunner()
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        temp_name = f.name
+    try:
+        result = runner.invoke(cli, ["inspect", temp_name, "--format", "html"])
+        assert result.exit_code == 0
+        assert "<!DOCTYPE html>" in result.output
+    finally:
+        if os.path.exists(temp_name):
+            os.remove(temp_name)
+
+
+def test_cli_find_empty():
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        result = runner.invoke(cli, ["find", temp_dir, "-p", "nonexistent"])
+        assert result.exit_code == 0
+        assert "Files in" in result.output
+
+
 def test_cli_completion():
     runner = CliRunner()
     res_ps = runner.invoke(cli, ["completion", "powershell"])
