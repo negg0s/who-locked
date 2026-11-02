@@ -5,6 +5,7 @@ import time
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 
 from .models import LockedFileEntry, LockingProcess, LockReport, TreeReport
+from .module_ops import find_processes_with_loaded_module
 from .process_ops import enrich_process_info, terminate_pid
 from .restart_manager import RestartManagerSession
 
@@ -66,6 +67,13 @@ def inspect_locks(target_path: str, max_dir_files: int = 100) -> LockReport:
 
     try:
         processes = _query_restart_manager(paths_to_query)
+
+        # If inspecting a binary module and no RM locks found, check loaded memory modules
+        if not processes and not is_dir and abs_path.lower().endswith((".dll", ".pyd", ".node")):
+            module_procs = find_processes_with_loaded_module(abs_path)
+            if module_procs:
+                processes = module_procs
+
         return LockReport(
             target_path=abs_path,
             is_directory=is_dir,

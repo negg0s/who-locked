@@ -3,7 +3,7 @@
 [![CI](https://github.com/negg0s/who-locked/actions/workflows/ci.yml/badge.svg)](https://github.com/negg0s/who-locked/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A Windows command-line utility for finding which processes are holding locks on a file or folder. It can inspect open handles through the Windows Restart Manager API, decode access rights, close specific file handles without killing processes, record lock timelines to JSONL, compute duration statistics, benchmark query latency, scan directory trees, monitor lock transitions in real time, launch an interactive terminal UI, or terminate offending processes and clean stubborn directories.
+A Windows command-line utility for finding which processes are holding locks on a file or folder. It can inspect open handles through the Windows Restart Manager API, inspect loaded DLL memory modules, decode access rights, close specific file handles without killing processes, take point-in-time snapshots, diff lock changes, analyze lock contention graphs, detect leaked locks during command execution, record lock timelines to JSONL, render ASCII Gantt timeline charts, benchmark query latency, scan directory trees, monitor lock transitions in real time, launch an interactive terminal UI, or terminate offending processes and clean stubborn directories.
 
 Requirements: Windows 10 or newer, Python 3.9 or newer.
 
@@ -15,9 +15,9 @@ When Windows displays:
 The action can't be completed because the file is open in another program
 ```
 
-it often does not say which process is responsible. Developers encounter this when removing `node_modules`, deleting virtual environments, clearing build caches, or overwriting binary outputs.
+it often does not say which process is responsible. Developers encounter this when removing `node_modules`, updating DLLs, deleting virtual environments, clearing build caches, or overwriting binary outputs.
 
-`who-locked` queries the Windows Restart Manager API (`rstrtmgr.dll`) and NT system handle tables (`ntdll.dll`) to find exact processes, decode access masks, record lock durations, and close individual file handles.
+`who-locked` queries the Windows Restart Manager API (`rstrtmgr.dll`), loaded module memory maps (`psapi`), and NT system handle tables (`ntdll.dll`) to find exact processes, decode access masks, render lock timelines, and close individual file handles.
 
 ## Install
 
@@ -86,6 +86,26 @@ Example pipe into PowerShell process termination:
 who-locked inspect "C:\path\to\locked_file.txt" --format pids | Stop-Process -Force
 ```
 
+## Finding processes holding loaded DLLs
+
+When updating or overwriting a `.dll`, `.pyd`, or `.node` binary, the file is often locked because a running process has mapped it into memory:
+
+```powershell
+who-locked dll "C:\games\app\plugin.dll"
+```
+
+Example output:
+
+```text
+Loaded Module Inspection: C:\games\app\plugin.dll
+Module is loaded in 1 running process(es):
+
+PID      NAME                     MEMORY       USER
+-----------------------------------------------------------------
+14820    app.exe                  124.5 MB     DESKTOP\user
+         Path: C:\games\app\app.exe
+```
+
 ## Closing handles without terminating processes
 
 To release a file without killing the application holding it (such as Visual Studio or an editor), close only the matching file handle:
@@ -110,29 +130,30 @@ Record lock acquisition and release events over time to a structured JSONL file 
 who-locked trace "C:\src\app\build\output.bin" --duration 15.0 --output build_locks.jsonl
 ```
 
-Analyze hold duration and find worst-case contention:
+Analyze hold duration statistics:
 
 ```powershell
 who-locked stats build_locks.jsonl
 ```
 
+Render an ASCII Gantt timeline chart directly in your terminal:
+
+```powershell
+who-locked plot build_locks.jsonl
+```
+
 Example output:
 
 ```text
-Trace Analysis: C:\src\app\build_locks.jsonl
-  Total events recorded: 14
-  Lock-release cycles:   7
-  Total locked time:     1480.5 ms
-
-Hold Duration (ms):
-  Min:    42.10
-  Median: 112.50
-  p95:    380.20
-  Max:    420.00
-
-Top Locking Processes:
-  - cl.exe: 5 lock cycle(s)
-  - link.exe: 2 lock cycle(s)
+Lock Timeline: build_locks.jsonl (Window: 14.80s, 3 cycles)
+Time: 0.0s                                            14.80s
+      |--------------------------------------------------|
+PID 4410 (node.exe)
+      |[==========]                                      |  3120.0ms
+PID 8412 (cl.exe)
+      |            [==============]                      |  4200.0ms
+PID 9120 (link.exe)
+      |                             [===================]|  5800.0ms
 ```
 
 ## Interactive terminal UI (TUI)
@@ -275,6 +296,80 @@ If a process ignores graceful termination, pass `-f` or `--force`:
 
 ```powershell
 who-locked release "C:\path\to\locked_file.txt" --force --yes
+```
+
+## Lock snapshots and differential analysis
+
+Save a point-in-time record of all active locks across a project or directory tree:
+
+```powershell
+who-locked snapshot "C:\src\project" -o snapshot-before.json
+```
+
+Compare two snapshots, or compare a saved snapshot against the current disk state to see which files were newly locked or released:
+
+```powershell
+# Compare two snapshot files:
+who-locked diff snapshot-before.json snapshot-after.json
+
+# Compare a saved snapshot against live disk state:
+who-locked diff snapshot-before.json "C:\src\project"
+
+# Output diff as JSON or Markdown:
+who-locked diff snapshot-before.json "C:\src\project" --format markdown
+who-locked diff snapshot-before.json "C:\src\project" --format json
+```
+
+Example text output:
+
+```text
+Lock Diff Summary:
+  Before: 2026-11-02T10:00:00Z
+  After:  2026-11-02T10:05:00Z
+  Changes detected: Yes
+  Added: 1 | Released: 1 | Persisting: 1
+-----------------------------------------------------------------
+[+] Added Locks (1):
+    * C:\src\project\target\out.lock -> rustc.exe (PID 9120)
+[-] Released Locks (1):
+    * C:\src\project\.cargo\.package-cache (was: cargo.exe (PID 4410))
+[=] Persisting Locks (1):
+    * C:\src\project\app.db -> python.exe (PID 1024)
+```
+
+## Detecting leaked locks during command execution
+
+Run build tools, test suites, or background tasks and automatically detect any files left locked when the command finishes:
+
+```powershell
+who-locked run --dir "C:\src\project" -- pytest tests/
+who-locked run --dir "C:\src\project" --fail-on-leak -- cargo test
+```
+
+If any processes leave handles open in the target folder, `who-locked run` reports the exact files and offending PIDs.
+
+## Lock contention graph and Mermaid diagrams
+
+Analyze shared lock contentions when multiple processes access overlapping files:
+
+```powershell
+# Text view:
+who-locked graph "C:\src\project"
+
+# GitHub-compatible Mermaid flowchart:
+who-locked graph "C:\src\project" --format mermaid
+```
+
+Example Mermaid output:
+
+```mermaid
+flowchart LR
+  F0["shared.db"]:::contended
+  P0("service.exe (PID 111)")
+  P1("client.exe (PID 222)")
+  P0 --> F0
+  P1 --> F0
+  classDef contended fill:#f96,stroke:#333,stroke-width:2px;
 ```
 
 ## Safety guardrails

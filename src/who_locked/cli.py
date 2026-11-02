@@ -1,5 +1,6 @@
 from datetime import datetime
 import json
+import os
 import sys
 import time
 from typing import List, Optional, Union
@@ -18,9 +19,13 @@ from .core import (
     watch_lock_events,
 )
 from .doctor import run_diagnostics
+from .graph import build_contention_graph
 from .handle_ops import close_target_file_handles, get_process_file_handle_details
 from .html_report import render_html_report
 from .models import LockReport, TreeReport
+from .module_ops import find_processes_with_loaded_module
+from .plot import render_ascii_timeline
+from .snapshot import LockSnapshot, compare_snapshots, take_snapshot
 from .trace import analyze_lock_trace, record_lock_trace
 from .tui import run_tui
 
@@ -347,6 +352,43 @@ def trace_cmd(path: str, output: str, duration: float, interval: float, json_mod
         click.echo(f"Trace completed: {res['events_recorded']} events saved to '{res['output_path']}'.")
 
 
+@cli.command("dll")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
+def dll_cmd(path: str, json_mode: bool) -> None:
+    """Find processes that have loaded a specific DLL into memory."""
+    matches = find_processes_with_loaded_module(path)
+    if json_mode:
+        data = [p.to_dict() for p in matches]
+        click.echo(json.dumps(data, indent=2))
+        sys.exit(0)
+
+    click.echo(f"Loaded Module Inspection: {path}")
+    if not matches:
+        click.echo("No running processes have this module loaded into memory.")
+        sys.exit(0)
+
+    click.echo(f"Module is loaded in {len(matches)} running process(es):\n")
+    click.echo(f"{'PID':<8} {'NAME':<24} {'MEMORY':<12} {'USER'}")
+    click.echo("-" * 65)
+    for p in matches:
+        mem = f"{p.memory_mb:.1f} MB" if p.memory_mb is not None else "-"
+        click.echo(f"{p.pid:<8} {p.name[:23]:<24} {mem:<12} {p.username or '-'}")
+        if p.exe_path:
+            click.echo(f"         Path: {p.exe_path}")
+
+    sys.exit(1)
+
+
+@cli.command("plot")
+@click.argument("trace_path", type=click.Path(exists=True))
+@click.option("-w", "--width", default=50, show_default=True, help="Timeline character width.")
+def plot_cmd(trace_path: str, width: int) -> None:
+    """Render an ASCII timeline Gantt chart from a JSONL lock trace."""
+    chart = render_ascii_timeline(trace_path, width=width)
+    click.echo(chart)
+
+
 @cli.command("stats")
 @click.argument("trace_path", type=click.Path(exists=True))
 @click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
@@ -542,6 +584,146 @@ def wait_cmd(path: str, timeout: float, interval: float, quiet: bool) -> None:
         sys.exit(1)
 
 
+@cli.command("snapshot")
+@click.argument("path", default=".", type=click.Path(exists=True))
+@click.option("-o", "--output", "output_path", type=click.Path(), default="locks-snapshot.json", help="Path to write the snapshot JSON file.")
+def snapshot_cmd(path: str, output_path: str) -> None:
+    """Save a point-in-time snapshot of active file locks."""
+    snap = take_snapshot(path)
+    snap.save(output_path)
+    click.echo(f"Saved lock snapshot for {path} ({len(snap.locks)} locked files) -> {output_path}")
+
+
+@cli.command("diff")
+@click.argument("base_snapshot", type=click.Path(exists=True))
+@click.argument("target", default=None, required=False, type=click.Path(exists=True))
+@click.option("--format", "output_format", type=click.Choice(["text", "json", "markdown"]), default="text", help="Output format.")
+def diff_cmd(base_snapshot: str, target: Optional[str], output_format: str) -> None:
+    """Compare two lock snapshots or a snapshot against current disk state."""
+    before = LockSnapshot.load(base_snapshot)
+    target_path = target if (target is not None and target != "") else before.root_path
+
+    if os.path.isfile(target_path) and target_path.lower().endswith(".json"):
+        after = LockSnapshot.load(target_path)
+    else:
+        after = take_snapshot(target_path)
+
+    diff = compare_snapshots(before, after)
+
+    if output_format == "json":
+        click.echo(json.dumps(diff.to_dict(), indent=2))
+        return
+
+    if output_format == "markdown":
+        lines = []
+        lines.append("# File Lock Diff Report\n")
+        lines.append(f"- **Before:** `{diff.before_timestamp}`")
+        lines.append(f"- **After:** `{diff.after_timestamp}`")
+        lines.append(f"- **Added Locks:** {len(diff.added_locks)}")
+        lines.append(f"- **Released Locks:** {len(diff.released_locks)}")
+        lines.append(f"- **Persisting Locks:** {len(diff.persisting_locks)}\n")
+
+        if diff.added_locks:
+            lines.append("## Added Locks (New)\n")
+            lines.append("| File | Holding Processes |")
+            lines.append("| --- | --- |")
+            for fpath, procs in sorted(diff.added_locks.items()):
+                proc_str = ", ".join(f"`{p.name}` (PID {p.pid})" for p in procs)
+                lines.append(f"| `{fpath}` | {proc_str} |")
+            lines.append("")
+
+        if diff.released_locks:
+            lines.append("## Released Locks (Freed)\n")
+            lines.append("| File | Former Processes |")
+            lines.append("| --- | --- |")
+            for fpath, procs in sorted(diff.released_locks.items()):
+                proc_str = ", ".join(f"`{p.name}` (PID {p.pid})" for p in procs)
+                lines.append(f"| `{fpath}` | {proc_str} |")
+            lines.append("")
+
+        click.echo("\n".join(lines))
+        return
+
+    # Text format
+    lines = []
+    lines.append("Lock Diff Summary:")
+    lines.append(f"  Before: {diff.before_timestamp}")
+    lines.append(f"  After:  {diff.after_timestamp}")
+    lines.append(f"  Changes detected: {'Yes' if diff.has_changes else 'No'}")
+    lines.append(f"  Added: {len(diff.added_locks)} | Released: {len(diff.released_locks)} | Persisting: {len(diff.persisting_locks)}")
+    lines.append("-" * 65)
+
+    if diff.added_locks:
+        lines.append(click.style(f"[+] Added Locks ({len(diff.added_locks)}):", fg="red", bold=True))
+        for fpath, procs in sorted(diff.added_locks.items()):
+            proc_str = ", ".join(f"{p.name} (PID {p.pid})" for p in procs)
+            lines.append(f"    * {fpath} -> {proc_str}")
+
+    if diff.released_locks:
+        lines.append(click.style(f"[-] Released Locks ({len(diff.released_locks)}):", fg="green", bold=True))
+        for fpath, procs in sorted(diff.released_locks.items()):
+            proc_str = ", ".join(f"{p.name} (PID {p.pid})" for p in procs)
+            lines.append(f"    * {fpath} (was: {proc_str})")
+
+    if diff.persisting_locks:
+        lines.append(f"[=] Persisting Locks ({len(diff.persisting_locks)}):")
+        for fpath, procs in sorted(diff.persisting_locks.items()):
+            proc_str = ", ".join(f"{p.name} (PID {p.pid})" for p in procs)
+            lines.append(f"    * {fpath} -> {proc_str}")
+
+    if not diff.has_changes and not diff.persisting_locks:
+        lines.append("No active file locks recorded in either snapshot.")
+
+    click.echo("\n".join(lines))
+
+
+@cli.command("graph")
+@click.argument("path", default=".", type=click.Path(exists=True))
+@click.option("--format", "output_format", type=click.Choice(["text", "mermaid", "json"]), default="text", help="Output format.")
+def graph_cmd(path: str, output_format: str) -> None:
+    """Analyze shared lock contention and process conflicts."""
+    rep = build_contention_graph(path)
+    if output_format == "mermaid":
+        click.echo(rep.render_mermaid())
+    elif output_format == "json":
+        click.echo(json.dumps(rep.to_dict(), indent=2))
+    else:
+        click.echo(rep.render_ascii())
+
+
+@cli.command("run", context_settings=dict(ignore_unknown_options=True))
+@click.option("--dir", "watch_dir", default=".", type=click.Path(exists=True), help="Directory to inspect for lock leaks.")
+@click.option("--fail-on-leak", is_flag=True, help="Exit with code 1 if any lock leaks are detected.")
+@click.argument("cmd", nargs=-1, required=True, type=click.UNPROCESSED)
+def run_cmd(watch_dir: str, fail_on_leak: bool, cmd: tuple) -> None:
+    """Run an arbitrary command and report any file locks it leaves behind."""
+    import subprocess
+    click.echo(f"Recording pre-execution snapshot for: {watch_dir}")
+    before = take_snapshot(watch_dir)
+
+    cmd_list = list(cmd)
+    click.echo(f"Executing: {' '.join(cmd_list)}")
+    start_time = time.time()
+    result = subprocess.run(cmd_list)
+    elapsed = time.time() - start_time
+
+    click.echo(f"Command exited with code {result.returncode} in {elapsed:.2f}s. Checking for leaked locks...")
+    after = take_snapshot(watch_dir)
+    diff = compare_snapshots(before, after)
+
+    if diff.added_locks:
+        click.echo(click.style(f"[LEAK DETECTED] {len(diff.added_locks)} file(s) left locked!", fg="red", bold=True))
+        for fpath, procs in sorted(diff.added_locks.items()):
+            proc_desc = ", ".join(f"{p.name} (PID {p.pid})" for p in procs)
+            click.echo(f"  * {fpath} -> held by: {proc_desc}")
+        if fail_on_leak and result.returncode == 0:
+            sys.exit(1)
+    else:
+        click.echo(click.style("[CLEAN] 0 file locks leaked by command.", fg="green", bold=True))
+
+    sys.exit(result.returncode)
+
+
 @cli.command("completion")
 @click.argument("shell", type=click.Choice(["powershell", "bash"]), default="powershell")
 def completion_cmd(shell: str) -> None:
@@ -550,7 +732,7 @@ def completion_cmd(shell: str) -> None:
         click.echo(
             'Register-ArgumentCompleter -Native -CommandName who-locked -ScriptBlock {\n'
             '    param($wordToComplete, $commandAst, $cursorPosition)\n'
-            "    $cmds = @('inspect', 'tree', 'find', 'tui', 'bench', 'trace', 'stats', 'close-handle', 'clean', 'watch', 'release', 'wait', 'menu', 'doctor', 'completion')\n"
+            "    $cmds = @('inspect', 'tree', 'find', 'dll', 'plot', 'snapshot', 'diff', 'graph', 'run', 'tui', 'bench', 'trace', 'stats', 'close-handle', 'clean', 'watch', 'release', 'wait', 'menu', 'doctor', 'completion')\n"
             '    $cmds | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {\n'
             '        [System.Management.Automation.CompletionResult]::new($_, $_, "ParameterValue", $_)\n'
             '    }\n'
@@ -561,7 +743,7 @@ def completion_cmd(shell: str) -> None:
             '_who_locked_completion() {\n'
             '    local cur prev words cword\n'
             '    _init_completion || return\n'
-            '    local commands="inspect tree find tui bench close-handle clean watch release wait menu doctor completion"\n'
+            '    local commands="inspect tree find dll plot snapshot diff graph run tui bench trace stats close-handle clean watch release wait menu doctor completion"\n'
             '    if [[ $cword -eq 1 ]]; then\n'
             '        COMPREPLY=( $(compgen -W "$commands" -- "$cur") )\n'
             '    fi\n'
