@@ -17,6 +17,7 @@ from .core import (
     watch_lock_events,
 )
 from .doctor import run_diagnostics
+from .handle_ops import close_target_file_handles
 from .html_report import render_html_report
 from .models import LockReport, TreeReport
 from .tui import run_tui
@@ -320,6 +321,45 @@ def release_cmd(path: str, force: bool, timeout: float, yes: bool, interactive: 
     sys.exit(0 if result["success"] else 1)
 
 
+@cli.command("close-handle")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--pid", "target_pid", type=int, help="Target specific PID only.")
+@click.option("-y", "--yes", is_flag=True, help="Bypass confirmation prompt.")
+@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
+def close_handle_cmd(path: str, target_pid: Optional[int], yes: bool, json_mode: bool) -> None:
+    """Close file handles directly without terminating locking processes."""
+    report = inspect_locks(path)
+    if not report.is_locked and target_pid is None:
+        if json_mode:
+            click.echo(json.dumps({"target": path, "success": True, "total_closed": 0}))
+        else:
+            click.echo(f"No active locks found on {path}.")
+        sys.exit(0)
+
+    pids = [target_pid] if target_pid else [p.pid for p in report.locking_processes]
+
+    if not yes and not json_mode:
+        click.echo(f"Attempting to close open handles for: {path}")
+        click.echo(f"Target process PIDs: {', '.join(str(p) for p in pids)}")
+        click.echo("Warning: Closing handles directly can make the target application unstable.")
+        if not click.confirm("Proceed with closing handles?"):
+            click.echo("Aborted.")
+            sys.exit(1)
+
+    result = close_target_file_handles(path, pids=pids)
+
+    if json_mode:
+        click.echo(json.dumps(result, indent=2))
+    else:
+        if result["total_closed"] > 0:
+            click.echo(f"Successfully closed {result['total_closed']} handle(s) across {len(result['details'])} process(es).")
+            click.echo("Processes remain running.")
+        else:
+            click.echo("No matching file handles could be closed.", err=True)
+
+    sys.exit(0 if result["success"] else 1)
+
+
 @cli.command("clean")
 @click.argument("path", type=click.Path(exists=True, file_okay=False, dir_okay=True))
 @click.option("-y", "--yes", is_flag=True, help="Bypass confirmation prompt.")
@@ -392,7 +432,7 @@ def completion_cmd(shell: str) -> None:
         click.echo(
             'Register-ArgumentCompleter -Native -CommandName who-locked -ScriptBlock {\n'
             '    param($wordToComplete, $commandAst, $cursorPosition)\n'
-            "    $cmds = @('inspect', 'tree', 'find', 'tui', 'clean', 'watch', 'release', 'wait', 'menu', 'doctor', 'completion')\n"
+            "    $cmds = @('inspect', 'tree', 'find', 'tui', 'close-handle', 'clean', 'watch', 'release', 'wait', 'menu', 'doctor', 'completion')\n"
             '    $cmds | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {\n'
             '        [System.Management.Automation.CompletionResult]::new($_, $_, "ParameterValue", $_)\n'
             '    }\n'

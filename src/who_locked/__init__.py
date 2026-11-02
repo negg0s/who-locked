@@ -10,16 +10,26 @@ from .core import (
     wait_for_release,
     watch_lock_events,
 )
+from .handle_ops import (
+    close_process_handle,
+    close_target_file_handles,
+    find_file_handles_in_process,
+    get_all_system_handles,
+)
 from .html_report import render_html_report
 from .models import LockedFileEntry, LockingProcess, LockReport, TreeReport
 from .safety import CRITICAL_NAMES, PROTECTED_PIDS, is_safe_to_terminate
 from .tui import run_tui
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "__version__",
     "clean_directory",
+    "close_process_handle",
+    "close_target_file_handles",
+    "find_file_handles_in_process",
     "find_locks_by_process",
+    "get_all_system_handles",
     "inspect_locks",
     "release_locks",
     "release_selected_processes",

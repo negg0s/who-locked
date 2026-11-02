@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "who-locked"
-version = "0.3.0"
-description = "Fast Windows file lock inspector, release, clean, and TUI dashboard."
+version = "0.4.0"
+description = "Fast Windows file lock inspector, handle-level closer, cleaner, and TUI dashboard."
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
     { name = "negg0s" }
 ]
 license = { text = "MIT" }
-keywords = ["windows", "locks", "restart-manager", "cli", "tui", "file-locks", "sysinternals", "process-tuner"]
+keywords = ["windows", "locks", "restart-manager", "cli", "tui", "handles", "file-locks", "sysinternals", "process-tuner"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",

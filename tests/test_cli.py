@@ -157,6 +157,19 @@ def test_cli_completion():
     assert "complete -F" in res_bash.output
 
 
+def test_cli_close_handle_free_file():
+    runner = CliRunner()
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        temp_name = f.name
+    try:
+        result = runner.invoke(cli, ["close-handle", temp_name, "--yes"])
+        assert result.exit_code == 0
+        assert "No active locks found" in result.output
+    finally:
+        if os.path.exists(temp_name):
+            os.remove(temp_name)
+
+
 def test_cli_menu_status():
     runner = CliRunner()
     result = runner.invoke(cli, ["menu", "status"])

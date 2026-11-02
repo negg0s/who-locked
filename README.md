@@ -3,7 +3,7 @@
 [![CI](https://github.com/negg0s/who-locked/actions/workflows/ci.yml/badge.svg)](https://github.com/negg0s/who-locked/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A Windows command-line utility for finding which processes are holding locks on a file or folder. It can inspect open handles through the Windows Restart Manager API, scan directory trees, monitor lock transitions in real time, launch an interactive terminal UI, or terminate offending processes and clean stubborn directories.
+A Windows command-line utility for finding which processes are holding locks on a file or folder. It can inspect open handles through the Windows Restart Manager API, close specific file handles without killing processes, scan directory trees, monitor lock transitions in real time, launch an interactive terminal UI, or terminate offending processes and clean stubborn directories.
 
 Requirements: Windows 10 or newer, Python 3.9 or newer.
 
@@ -17,7 +17,7 @@ The action can't be completed because the file is open in another program
 
 it often does not say which process is responsible. Developers encounter this when removing `node_modules`, deleting virtual environments, clearing build caches, or overwriting binary outputs.
 
-`who-locked` queries the Windows Restart Manager API (`rstrtmgr.dll`) to find the exact processes holding open handles on the file or directory.
+`who-locked` queries the Windows Restart Manager API (`rstrtmgr.dll`) and NT system handle tables (`ntdll.dll`) to find exact processes and close individual file handles.
 
 ## Install
 
@@ -83,9 +83,25 @@ Example pipe into PowerShell process termination:
 who-locked inspect "C:\path\to\locked_file.txt" --format pids | Stop-Process -Force
 ```
 
+## Closing handles without terminating processes
+
+To release a file without killing the application holding it (such as Visual Studio or an editor), close only the matching file handle:
+
+```powershell
+who-locked close-handle "C:\path\to\locked_file.txt"
+```
+
+This queries the system handle table, duplicates the file handle with `DUPLICATE_CLOSE_SOURCE`, and closes it at the OS level while keeping the application running.
+
+Skip confirmation prompt:
+
+```powershell
+who-locked close-handle "C:\path\to\locked_file.txt" --yes
+```
+
 ## Interactive terminal UI (TUI)
 
-Launch a console dashboard to navigate active locks and terminate processes with single keystrokes:
+Launch a console dashboard to navigate active locks and manage processes with single keystrokes:
 
 ```powershell
 who-locked tui "C:\projects\my-app\node_modules"
@@ -93,6 +109,7 @@ who-locked tui "C:\projects\my-app\node_modules"
 
 Controls:
 - `Up` / `Down`: Navigate process list
+- `c`: Close file handle only (keeps process running)
 - `x`: Terminate selected process
 - `r`: Refresh lock inspection
 - `q` / `Esc`: Exit dashboard

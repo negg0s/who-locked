@@ -4,6 +4,7 @@ import time
 from typing import List, Optional
 
 from .core import inspect_locks, scan_directory_tree
+from .handle_ops import close_target_file_handles
 from .models import LockingProcess
 from .process_ops import terminate_pid
 
@@ -94,7 +95,7 @@ def run_tui(target_path: str) -> None:
 
             lines.append("\n" + "=" * 78)
             lines.append(f"Status: {status_msg}")
-            lines.append("Keys:   [\033[1mUp/Down\033[0m] Select  [\033[1mx\033[0m] Terminate PID  [\033[1mr\033[0m] Refresh  [\033[1mq\033[0m] Quit")
+            lines.append("Keys:   [\033[1mUp/Down\033[0m] Select  [\033[1mc\033[0m] Close handle only  [\033[1mx\033[0m] Terminate PID  [\033[1mr\033[0m] Refresh  [\033[1mq\033[0m] Quit")
 
             # Draw
             sys.stdout.write("\033[2J\033[H" + "\n".join(lines))
@@ -110,6 +111,16 @@ def run_tui(target_path: str) -> None:
             elif key in ("down", "s"):
                 if selected_idx < len(procs) - 1:
                     selected_idx += 1
+            elif key == "c":
+                if procs:
+                    target_proc = procs[selected_idx]
+                    res = close_target_file_handles(abs_path, pids=[target_proc.pid])
+                    if res["success"]:
+                        status_msg = f"Closed {res['total_closed']} handle(s) in PID {target_proc.pid} without killing process."
+                    else:
+                        status_msg = f"Could not close handle in PID {target_proc.pid}."
+                else:
+                    status_msg = "No processes to close handles in."
             elif key in ("x", "delete"):
                 if procs:
                     target_proc = procs[selected_idx]
