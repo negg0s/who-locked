@@ -151,8 +151,13 @@ def scan_directory_tree(root_dir: str, max_files: int = 1000, batch_size: int = 
     )
 
 
-def release_locks(target_path: str, force: bool = False, timeout: float = 3.0) -> Dict[str, Any]:
-    """Terminate all processes locking the specified target."""
+def release_selected_processes(
+    target_path: str,
+    selected_pids: List[int],
+    force: bool = False,
+    timeout: float = 3.0,
+) -> Dict[str, Any]:
+    """Terminate specific processes locking the specified target."""
     initial_report = inspect_locks(target_path)
     if not initial_report.is_locked:
         return {
@@ -163,17 +168,28 @@ def release_locks(target_path: str, force: bool = False, timeout: float = 3.0) -
             "remaining_locks": 0,
         }
 
+    valid_pids = {p.pid: p.name for p in initial_report.locking_processes}
     results = []
-    for proc in initial_report.locking_processes:
-        success, msg = terminate_pid(proc.pid, force=force, timeout=timeout)
+
+    for pid in selected_pids:
+        if pid not in valid_pids:
+            results.append({
+                "pid": pid,
+                "name": "Unknown",
+                "success": False,
+                "message": f"PID {pid} does not hold a lock on target.",
+            })
+            continue
+
+        name = valid_pids[pid]
+        success, msg = terminate_pid(pid, force=force, timeout=timeout)
         results.append({
-            "pid": proc.pid,
-            "name": proc.name,
+            "pid": pid,
+            "name": name,
             "success": success,
             "message": msg,
         })
 
-    # Verify if any locks remain
     time.sleep(0.1)
     final_report = inspect_locks(target_path)
 
@@ -184,6 +200,13 @@ def release_locks(target_path: str, force: bool = False, timeout: float = 3.0) -
         "results": results,
         "remaining_locks": len(final_report.locking_processes),
     }
+
+
+def release_locks(target_path: str, force: bool = False, timeout: float = 3.0) -> Dict[str, Any]:
+    """Terminate all processes locking the specified target."""
+    initial_report = inspect_locks(target_path)
+    all_pids = [p.pid for p in initial_report.locking_processes]
+    return release_selected_processes(target_path, selected_pids=all_pids, force=force, timeout=timeout)
 
 
 def _remove_readonly(func, path, exc_info):

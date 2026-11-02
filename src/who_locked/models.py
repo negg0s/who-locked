@@ -1,5 +1,6 @@
+from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -88,12 +89,25 @@ class TreeReport:
     def is_locked(self) -> bool:
         return len(self.locked_entries) > 0
 
+    def process_summary(self) -> List[Dict[str, Any]]:
+        """Return list of processes grouped by how many files each holds."""
+        counter: Counter[Tuple[int, str]] = Counter()
+        for entry in self.locked_entries:
+            for p in entry.locking_processes:
+                counter[(p.pid, p.name)] += 1
+
+        summary = []
+        for (pid, name), count in counter.most_common():
+            summary.append({"pid": pid, "name": name, "locked_files_count": count})
+        return summary
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "root_path": self.root_path,
             "scanned_files_count": self.scanned_files_count,
             "locked_count": len(self.locked_entries),
             "is_locked": self.is_locked,
+            "process_summary": self.process_summary(),
             "locked_entries": [e.to_dict() for e in self.locked_entries],
             "error": self.error,
         }

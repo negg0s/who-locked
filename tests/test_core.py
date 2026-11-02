@@ -10,6 +10,7 @@ from who_locked.core import (
     collect_paths_to_check,
     inspect_locks,
     release_locks,
+    release_selected_processes,
     scan_directory_tree,
     wait_for_release,
     watch_lock_events,
@@ -182,6 +183,18 @@ def test_clean_directory_actual():
         assert res["success"] is True
         assert res["files_deleted"] == 1
         assert not os.path.exists(target)
+
+
+def test_release_selected_processes_unknown_pid():
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        temp_name = f.name
+    try:
+        res = release_selected_processes(temp_name, selected_pids=[999999])
+        assert res["success"] is True
+        assert len(res["results"]) == 0 or res["results"][0]["success"] is False
+    finally:
+        if os.path.exists(temp_name):
+            os.remove(temp_name)
 
 
 def test_watch_lock_events_initial():

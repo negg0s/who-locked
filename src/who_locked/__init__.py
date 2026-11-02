@@ -4,6 +4,7 @@ from .core import (
     clean_directory,
     inspect_locks,
     release_locks,
+    release_selected_processes,
     scan_directory_tree,
     wait_for_release,
     watch_lock_events,
@@ -11,12 +12,13 @@ from .core import (
 from .models import LockedFileEntry, LockingProcess, LockReport, TreeReport
 from .safety import CRITICAL_NAMES, PROTECTED_PIDS, is_safe_to_terminate
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __all__ = [
     "__version__",
     "clean_directory",
     "inspect_locks",
     "release_locks",
+    "release_selected_processes",
     "scan_directory_tree",
     "wait_for_release",
     "watch_lock_events",

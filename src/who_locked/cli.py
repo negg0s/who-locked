@@ -2,11 +2,19 @@ from datetime import datetime
 import json
 import sys
 import time
-from typing import Optional
+from typing import List, Optional
 import click
 
 from .context_menu import install_context_menu, is_context_menu_installed, uninstall_context_menu
-from .core import clean_directory, inspect_locks, release_locks, scan_directory_tree, wait_for_release, watch_lock_events
+from .core import (
+    clean_directory,
+    inspect_locks,
+    release_locks,
+    release_selected_processes,
+    scan_directory_tree,
+    wait_for_release,
+    watch_lock_events,
+)
 from .doctor import run_diagnostics
 from .models import LockReport, TreeReport
 
@@ -82,6 +90,13 @@ def format_tree_text(report: TreeReport, color: bool = True) -> str:
             p_line = f"      -> PID {p.pid} ({p.name}, {p.app_type}{mem_str}{parent_str})"
             lines.append(click.style(p_line, fg="yellow") if color else p_line)
 
+    summary = report.process_summary()
+    if summary:
+        lines.append("\nSummary by locking process:")
+        for item in summary:
+            s_line = f"  - PID {item['pid']} ({item['name']}): {item['locked_files_count']} file(s)"
+            lines.append(click.style(s_line, fg="yellow") if color else s_line)
+
     return "\n".join(lines)
 
 
@@ -97,28 +112,30 @@ def cli() -> None:
 @click.option("--format", "output_format", type=click.Choice(["text", "json", "pids", "csv"]), default="text", show_default=True, help="Output format.")
 @click.option("--json", "json_flag", is_flag=True, help="Shortcut for --format json.")
 @click.option("-v", "--verbose", is_flag=True, help="Show executable paths, parents, and arguments.")
+@click.option("-q", "--quiet", is_flag=True, help="Suppress terminal output.")
 @click.option("--no-color", is_flag=True, help="Disable ANSI colors.")
 @click.option("--max-files", default=100, show_default=True, help="Max files to scan inside directory.")
-def inspect_cmd(path: str, output_format: str, json_flag: bool, verbose: bool, no_color: bool, max_files: int = 100) -> None:
+def inspect_cmd(path: str, output_format: str, json_flag: bool, verbose: bool, quiet: bool, no_color: bool, max_files: int = 100) -> None:
     """Inspect active locks holding a file or directory."""
     if json_flag:
         output_format = "json"
 
     report = inspect_locks(path, max_dir_files=max_files)
 
-    if output_format == "json":
-        click.echo(json.dumps(report.to_dict(), indent=2))
-    elif output_format == "pids":
-        pids = [str(p.pid) for p in report.locking_processes]
-        if pids:
-            click.echo(" ".join(pids))
-    elif output_format == "csv":
-        click.echo("pid,name,type,status,memory_mb,username")
-        for p in report.locking_processes:
-            mem = f"{p.memory_mb:.1f}" if p.memory_mb is not None else ""
-            click.echo(f'{p.pid},"{p.name}","{p.app_type}","{p.app_status}",{mem},"{p.username or ""}"')
-    else:
-        click.echo(format_report_text(report, verbose=verbose, color=not no_color))
+    if not quiet:
+        if output_format == "json":
+            click.echo(json.dumps(report.to_dict(), indent=2))
+        elif output_format == "pids":
+            pids = [str(p.pid) for p in report.locking_processes]
+            if pids:
+                click.echo(" ".join(pids))
+        elif output_format == "csv":
+            click.echo("pid,name,type,status,memory_mb,username")
+            for p in report.locking_processes:
+                mem = f"{p.memory_mb:.1f}" if p.memory_mb is not None else ""
+                click.echo(f'{p.pid},"{p.name}","{p.app_type}","{p.app_status}",{mem},"{p.username or ""}"')
+        else:
+            click.echo(format_report_text(report, verbose=verbose, color=not no_color))
 
     if report.error:
         sys.exit(2)
@@ -192,38 +209,63 @@ def watch_cmd(path: str, interval: float, exit_on_free: bool, exit_on_lock: bool
 @click.option("-f", "--force", is_flag=True, help="Force kill processes if graceful close fails.")
 @click.option("-t", "--timeout", default=3.0, show_default=True, help="Timeout in seconds for termination.")
 @click.option("-y", "--yes", is_flag=True, help="Bypass confirmation prompt.")
+@click.option("-i", "--interactive", is_flag=True, help="Interactively select which processes to terminate.")
+@click.option("-q", "--quiet", is_flag=True, help="Suppress terminal output.")
 @click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
-def release_cmd(path: str, force: bool, timeout: float, yes: bool, json_mode: bool) -> None:
+def release_cmd(path: str, force: bool, timeout: float, yes: bool, interactive: bool, quiet: bool, json_mode: bool) -> None:
     """Terminate processes holding locks on the target path."""
     report = inspect_locks(path)
     if not report.is_locked:
-        if json_mode:
-            click.echo(json.dumps({"target": path, "was_locked": False, "success": True}))
-        else:
-            click.echo(f"No active locks found on {path}.")
+        if not quiet:
+            if json_mode:
+                click.echo(json.dumps({"target": path, "was_locked": False, "success": True}))
+            else:
+                click.echo(f"No active locks found on {path}.")
         sys.exit(0)
 
+    pids_to_kill: List[int] = [p.pid for p in report.locking_processes]
+
     if not yes and not json_mode:
-        click.echo(format_report_text(report))
-        click.echo()
-        if not click.confirm("Do you want to terminate these processes?"):
-            click.echo("Aborted.")
-            sys.exit(1)
-
-    result = release_locks(path, force=force, timeout=timeout)
-    if json_mode:
-        click.echo(json.dumps(result, indent=2))
-    else:
-        for item in result["results"]:
-            status = "OK" if item["success"] else "FAILED"
-            click.echo(f"[{status}] {item['message']}")
-
-        if result["success"]:
-            click.echo("\nAll locks cleared.")
-            sys.exit(0)
+        if interactive and len(report.locking_processes) > 1:
+            click.echo(f"Multiple processes holding locks on {path}:\n")
+            for idx, proc in enumerate(report.locking_processes, start=1):
+                click.echo(f"  [{idx}] PID {proc.pid}: {proc.name} ({proc.app_type})")
+            click.echo()
+            sel = click.prompt("Enter numbers to terminate (e.g. 1, 2, 'all', or 'q' to abort)", default="all")
+            sel = sel.strip().lower()
+            if sel in ("q", "quit", "exit", "abort"):
+                click.echo("Aborted.")
+                sys.exit(1)
+            elif sel != "all":
+                try:
+                    indices = [int(x.strip()) for x in sel.split(",")]
+                    pids_to_kill = [report.locking_processes[i - 1].pid for i in indices if 1 <= i <= len(report.locking_processes)]
+                except (ValueError, IndexError):
+                    click.echo("Invalid selection. Aborted.", err=True)
+                    sys.exit(1)
         else:
-            click.echo(f"\nWarning: {result['remaining_locks']} lock(s) still remain.")
-            sys.exit(1)
+            click.echo(format_report_text(report))
+            click.echo()
+            if not click.confirm("Do you want to terminate these processes?"):
+                click.echo("Aborted.")
+                sys.exit(1)
+
+    result = release_selected_processes(path, selected_pids=pids_to_kill, force=force, timeout=timeout)
+
+    if not quiet:
+        if json_mode:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            for item in result["results"]:
+                status = "OK" if item["success"] else "FAILED"
+                click.echo(f"[{status}] {item['message']}")
+
+            if result["success"]:
+                click.echo("\nAll locks cleared.")
+            else:
+                click.echo(f"\nWarning: {result['remaining_locks']} lock(s) still remain.")
+
+    sys.exit(0 if result["success"] else 1)
 
 
 @cli.command("clean")
@@ -274,16 +316,48 @@ def clean_cmd(path: str, yes: bool, force: bool, timeout: float, dry_run: bool, 
 @click.argument("path", type=click.Path())
 @click.option("-t", "--timeout", default=10.0, show_default=True, help="Max seconds to wait.")
 @click.option("-i", "--interval", default=0.25, show_default=True, help="Poll interval in seconds.")
-def wait_cmd(path: str, timeout: float, interval: float) -> None:
+@click.option("-q", "--quiet", is_flag=True, help="Suppress terminal output.")
+def wait_cmd(path: str, timeout: float, interval: float, quiet: bool) -> None:
     """Poll until the target is freed or timeout expires."""
-    click.echo(f"Waiting for {path} to be freed (timeout: {timeout}s)...")
+    if not quiet:
+        click.echo(f"Waiting for {path} to be freed (timeout: {timeout}s)...")
     freed = wait_for_release(path, timeout=timeout, interval=interval)
     if freed:
-        click.echo("Target is now free.")
+        if not quiet:
+            click.echo("Target is now free.")
         sys.exit(0)
     else:
-        click.echo("Timeout expired while waiting for target to be freed.", err=True)
+        if not quiet:
+            click.echo("Timeout expired while waiting for target to be freed.", err=True)
         sys.exit(1)
+
+
+@cli.command("completion")
+@click.argument("shell", type=click.Choice(["powershell", "bash"]), default="powershell")
+def completion_cmd(shell: str) -> None:
+    """Generate shell completion script."""
+    if shell == "powershell":
+        click.echo(
+            'Register-ArgumentCompleter -Native -CommandName who-locked -ScriptBlock {\n'
+            '    param($wordToComplete, $commandAst, $cursorPosition)\n'
+            "    $cmds = @('inspect', 'tree', 'clean', 'watch', 'release', 'wait', 'menu', 'doctor', 'completion')\n"
+            '    $cmds | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {\n'
+            '        [System.Management.Automation.CompletionResult]::new($_, $_, "ParameterValue", $_)\n'
+            '    }\n'
+            '}'
+        )
+    elif shell == "bash":
+        click.echo(
+            '_who_locked_completion() {\n'
+            '    local cur prev words cword\n'
+            '    _init_completion || return\n'
+            '    local commands="inspect tree clean watch release wait menu doctor completion"\n'
+            '    if [[ $cword -eq 1 ]]; then\n'
+            '        COMPREPLY=( $(compgen -W "$commands" -- "$cur") )\n'
+            '    fi\n'
+            '}\n'
+            'complete -F _who_locked_completion who-locked'
+        )
 
 
 @cli.group("menu")

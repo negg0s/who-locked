@@ -42,6 +42,19 @@ def test_cli_inspect_free_file():
             os.remove(temp_name)
 
 
+def test_cli_inspect_quiet():
+    runner = CliRunner()
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        temp_name = f.name
+    try:
+        result = runner.invoke(cli, ["inspect", temp_name, "-q"])
+        assert result.exit_code == 0
+        assert result.output.strip() == ""
+    finally:
+        if os.path.exists(temp_name):
+            os.remove(temp_name)
+
+
 def test_cli_inspect_json():
     runner = CliRunner()
     with tempfile.NamedTemporaryFile(delete=False) as f:
@@ -110,6 +123,17 @@ def test_cli_clean_actual():
         assert result.exit_code == 0
         assert "Successfully deleted" in result.output
         assert not os.path.exists(target)
+
+
+def test_cli_completion():
+    runner = CliRunner()
+    res_ps = runner.invoke(cli, ["completion", "powershell"])
+    assert res_ps.exit_code == 0
+    assert "Register-ArgumentCompleter" in res_ps.output
+
+    res_bash = runner.invoke(cli, ["completion", "bash"])
+    assert res_bash.exit_code == 0
+    assert "complete -F" in res_bash.output
 
 
 def test_cli_menu_status():

@@ -3,7 +3,7 @@
 [![CI](https://github.com/negg0s/who-locked/actions/workflows/ci.yml/badge.svg)](https://github.com/negg0s/who-locked/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A Windows command-line utility for finding which processes are holding locks on a file or folder. It can inspect open handles through the Windows Restart Manager API, scan directory trees for locked sub-files, monitor lock transitions in real time, or terminate the offending processes and clean stubborn directories.
+A Windows command-line utility for finding which processes are holding locks on a file or folder. It can inspect open handles through the Windows Restart Manager API, scan directory trees for locked sub-files, monitor lock transitions in real time, or terminate offending processes and clean stubborn directories.
 
 Requirements: Windows 10 or newer, Python 3.9 or newer.
 
@@ -58,7 +58,7 @@ Add `--verbose` to view full executable paths, parent processes, and command-lin
 who-locked inspect "C:\path\to\locked_file.txt" --verbose
 ```
 
-Output machine-readable formats for scripts and pipelines:
+Output formats for scripts and pipelines:
 
 ```powershell
 # JSON format:
@@ -69,6 +69,9 @@ who-locked inspect "C:\path\to\locked_file.txt" --format pids
 
 # CSV format:
 who-locked inspect "C:\path\to\locked_file.txt" --format csv
+
+# Quiet mode (exit code only: 0=free, 1=locked, 2=error):
+who-locked inspect "C:\path\to\locked_file.txt" -q
 ```
 
 Example pipe into PowerShell process termination:
@@ -79,7 +82,7 @@ who-locked inspect "C:\path\to\locked_file.txt" --format pids | Stop-Process -Fo
 
 ## Scanning directory trees
 
-When deleting large directories (such as `node_modules` or `.venv`), a few nested files often block the entire folder from being removed. Use `tree` to locate each individual locked file:
+When deleting large directories (such as `node_modules` or `.venv`), nested files can block the folder from being removed. Use `tree` to locate each locked file:
 
 ```powershell
 who-locked tree "C:\projects\my-app\node_modules"
@@ -97,17 +100,21 @@ Found 2 locked item(s):
       -> PID 9120 (esbuild.exe, Console, 14.2 MB, parent: node.exe)
   * .cache\build.lock
       -> PID 4410 (node.exe, Console, 88.5 MB, parent: cmd.exe)
+
+Summary by locking process:
+  - PID 4410 (node.exe): 1 file(s)
+  - PID 9120 (esbuild.exe): 1 file(s)
 ```
 
 ## Cleaning stubborn directories
 
-When `rmdir /s /q` or `Remove-Item -Recurse -Force` fails because a background process is holding onto a file, use `clean`:
+When `rmdir /s /q` or `Remove-Item -Recurse -Force` fails because a background process holds a handle, use `clean`:
 
 ```powershell
 who-locked clean "C:\projects\my-app\node_modules"
 ```
 
-This scans the folder tree for locks, prompts to terminate any locking processes, waits for handles to close, and deletes the directory.
+This scans the folder tree for locks, prompts to terminate locking processes, waits for handles to close, and deletes the directory.
 
 Use `--dry-run` to preview without making any changes:
 
@@ -150,8 +157,13 @@ Terminate processes holding a file:
 who-locked release "C:\path\to\locked_file.txt"
 ```
 
-This displays the list of processes and asks for confirmation before terminating them.
-Use `-y` or `--yes` to skip the prompt:
+When multiple processes hold handles, use interactive mode to select which PIDs to terminate:
+
+```powershell
+who-locked release "C:\path\to\locked_file.txt" -i
+```
+
+Skip confirmation:
 
 ```powershell
 who-locked release "C:\path\to\locked_file.txt" --yes
@@ -179,6 +191,21 @@ who-locked wait "C:\path\to\output.bin" --timeout 15.0
 ```
 
 Returns exit code 0 when the file is free, or exit code 1 if the timeout expires.
+
+## Shell completion
+
+Generate tab-completion script for PowerShell:
+
+```powershell
+who-locked completion powershell | Out-String | Invoke-Expression
+```
+
+Add that command to `$PROFILE` for permanent tab-completion.
+For Bash:
+
+```bash
+eval "$(who-locked completion bash)"
+```
 
 ## Explorer context menu integration
 
