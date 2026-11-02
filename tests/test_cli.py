@@ -57,6 +57,42 @@ def test_cli_inspect_json():
             os.remove(temp_name)
 
 
+def test_cli_inspect_formats():
+    runner = CliRunner()
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        temp_name = f.name
+    try:
+        # pids format
+        res_pids = runner.invoke(cli, ["inspect", temp_name, "--format", "pids"])
+        assert res_pids.exit_code == 0
+
+        # csv format
+        res_csv = runner.invoke(cli, ["inspect", temp_name, "--format", "csv"])
+        assert res_csv.exit_code == 0
+        assert "pid,name,type" in res_csv.output
+    finally:
+        if os.path.exists(temp_name):
+            os.remove(temp_name)
+
+
+def test_cli_tree():
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        result = runner.invoke(cli, ["tree", temp_dir])
+        assert result.exit_code == 0
+        assert "CLEAN" in result.output
+
+
+def test_cli_tree_json():
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        result = runner.invoke(cli, ["tree", temp_dir, "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["is_locked"] is False
+        assert data["locked_count"] == 0
+
+
 def test_cli_menu_status():
     runner = CliRunner()
     result = runner.invoke(cli, ["menu", "status"])

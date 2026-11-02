@@ -15,6 +15,9 @@ class LockingProcess:
     exe_path: Optional[str] = None
     username: Optional[str] = None
     memory_mb: Optional[float] = None
+    parent_pid: Optional[int] = None
+    parent_name: Optional[str] = None
+    cmdline: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -27,6 +30,9 @@ class LockingProcess:
             "exe_path": self.exe_path,
             "username": self.username,
             "memory_mb": self.memory_mb,
+            "parent_pid": self.parent_pid,
+            "parent_name": self.parent_name,
+            "cmdline": self.cmdline,
         }
 
 
@@ -49,5 +55,45 @@ class LockReport:
             "process_count": len(self.locking_processes),
             "locking_processes": [proc.to_dict() for proc in self.locking_processes],
             "queried_paths": self.queried_paths,
+            "error": self.error,
+        }
+
+
+@dataclass
+class LockedFileEntry:
+    """A specific file within a directory tree that is locked."""
+
+    path: str
+    relative_path: str
+    locking_processes: List[LockingProcess] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "path": self.path,
+            "relative_path": self.relative_path,
+            "processes": [p.to_dict() for p in self.locking_processes],
+        }
+
+
+@dataclass
+class TreeReport:
+    """Result of scanning an entire directory tree for individual locked files."""
+
+    root_path: str
+    scanned_files_count: int
+    locked_entries: List[LockedFileEntry] = field(default_factory=list)
+    error: Optional[str] = None
+
+    @property
+    def is_locked(self) -> bool:
+        return len(self.locked_entries) > 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "root_path": self.root_path,
+            "scanned_files_count": self.scanned_files_count,
+            "locked_count": len(self.locked_entries),
+            "is_locked": self.is_locked,
+            "locked_entries": [e.to_dict() for e in self.locked_entries],
             "error": self.error,
         }

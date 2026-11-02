@@ -17,6 +17,9 @@ def enrich_process_info(raw: RM_PROCESS_INFO) -> LockingProcess:
     exe_path: Optional[str] = None
     username: Optional[str] = None
     memory_mb: Optional[float] = None
+    parent_pid: Optional[int] = None
+    parent_name: Optional[str] = None
+    cmdline: Optional[str] = None
     resolved_name = app_name
 
     try:
@@ -39,6 +42,21 @@ def enrich_process_info(raw: RM_PROCESS_INFO) -> LockingProcess:
             memory_mb = round(mem.rss / (1024 * 1024), 2)
         except (psutil.AccessDenied, psutil.NoSuchProcess):
             pass
+
+        try:
+            parent = proc.parent()
+            if parent:
+                parent_pid = parent.pid
+                parent_name = parent.name()
+        except (psutil.AccessDenied, psutil.NoSuchProcess):
+            pass
+
+        try:
+            parts = proc.cmdline()
+            if parts:
+                cmdline = " ".join(parts)
+        except (psutil.AccessDenied, psutil.NoSuchProcess):
+            pass
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         pass
 
@@ -55,6 +73,9 @@ def enrich_process_info(raw: RM_PROCESS_INFO) -> LockingProcess:
         exe_path=exe_path,
         username=username,
         memory_mb=memory_mb,
+        parent_pid=parent_pid,
+        parent_name=parent_name,
+        cmdline=cmdline,
     )
 
 

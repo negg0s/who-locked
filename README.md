@@ -3,7 +3,7 @@
 [![CI](https://github.com/negg0s/who-locked/actions/workflows/ci.yml/badge.svg)](https://github.com/negg0s/who-locked/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A Windows command-line utility for finding which processes are holding locks on a file or folder. It can inspect open handles through the Windows Restart Manager API, wait for locks to clear, or terminate the offending processes.
+A Windows command-line utility for finding which processes are holding locks on a file or folder. It can inspect open handles through the Windows Restart Manager API, scan directory trees for locked sub-files, monitor lock transitions in real time, or terminate the offending processes.
 
 Requirements: Windows 10 or newer, Python 3.9 or newer.
 
@@ -52,17 +52,73 @@ PID      NAME                     TYPE           MEMORY       USER
 14820    app.exe                  Console        48.2 MB      DESKTOP\user
 ```
 
-Add `--verbose` to view full executable paths:
+Add `--verbose` to view full executable paths, parent processes, and command-line arguments:
 
 ```powershell
 who-locked inspect "C:\path\to\locked_file.txt" --verbose
 ```
 
-Output machine-readable JSON for scripts:
+Output machine-readable formats for scripts and pipelines:
 
 ```powershell
-who-locked inspect "C:\path\to\locked_file.txt" --json
+# JSON format:
+who-locked inspect "C:\path\to\locked_file.txt" --format json
+
+# Space-separated PIDs only (pipe-friendly):
+who-locked inspect "C:\path\to\locked_file.txt" --format pids
+
+# CSV format:
+who-locked inspect "C:\path\to\locked_file.txt" --format csv
 ```
+
+Example pipe into PowerShell process termination:
+
+```powershell
+who-locked inspect "C:\path\to\locked_file.txt" --format pids | Stop-Process -Force
+```
+
+## Scanning directory trees
+
+When deleting large directories (such as `node_modules` or `.venv`), a few nested files often block the entire folder from being removed. Use `tree` to locate each individual locked file:
+
+```powershell
+who-locked tree "C:\projects\my-app\node_modules"
+```
+
+Example output:
+
+```text
+Root:    C:\projects\my-app\node_modules
+Scanned: 1240 file(s)
+
+Found 2 locked item(s):
+
+  * @esbuild\win32-x64\esbuild.exe
+      -> PID 9120 (esbuild.exe, Console, 14.2 MB, parent: node.exe)
+  * .cache\build.lock
+      -> PID 4410 (node.exe, Console, 88.5 MB, parent: cmd.exe)
+```
+
+## Real-time lock monitoring
+
+Watch a file or folder and track when locks are acquired and released:
+
+```powershell
+who-locked watch "C:\path\to\output.bin"
+```
+
+Example output:
+
+```text
+Watching C:\path\to\output.bin for lock changes (interval: 0.5s, press Ctrl+C to stop)...
+[17:15:02.124] [LOCKED] Locked by: cl.exe (PID 8412)
+[17:15:05.450] [FREE]   Target is free after 3.326s
+```
+
+Automation flags:
+- `--exit-on-free`: Exit immediately when the target becomes free.
+- `--exit-on-lock`: Exit immediately when a lock is detected.
+- `--beep`: Sound console bell on state change.
 
 ## Releasing locks
 
@@ -129,7 +185,7 @@ Example output:
 
 ```text
 Environment Diagnostics:
-  [OK]   Operating System             Windows 11 (Build 10.0.26100)
+  [OK]   Operating System             Windows 11 (Build 10.0.26200)
   [OK]   Restart Manager API          rstrtmgr.dll loaded
   [OK]   Administrator Privileges     Standard User
   [OK]   Explorer Context Menu        Not installed (use 'who-locked menu install')
@@ -140,7 +196,7 @@ System is ready for lock inspection.
 ## What it does and does not do
 
 - It queries the official Windows Restart Manager session API to detect applications, services, and Explorer handles.
-- It can scan single files as well as active handles inside directories.
+- It can scan single files, directory handles, and recursively locate locked files across directories.
 - It does not install kernel filter drivers or hook system calls.
 - Terminating system-critical processes or services owned by other users may require running PowerShell as Administrator.
 

@@ -5,7 +5,14 @@ import tempfile
 import time
 import pytest
 
-from who_locked.core import collect_paths_to_check, inspect_locks, release_locks, wait_for_release
+from who_locked.core import (
+    collect_paths_to_check,
+    inspect_locks,
+    release_locks,
+    scan_directory_tree,
+    wait_for_release,
+    watch_lock_events,
+)
 
 
 def test_collect_paths_file():
@@ -126,11 +133,47 @@ def test_cross_process_lock_and_release():
                 pass
 
 
+def test_scan_directory_tree_clean():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        report = scan_directory_tree(temp_dir)
+        assert report.is_locked is False
+        assert report.locked_entries == []
+        assert report.error is None
+
+
+def test_scan_directory_tree_with_lock():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        sub_file = os.path.join(temp_dir, "sub", "test.txt")
+        os.makedirs(os.path.dirname(sub_file), exist_ok=True)
+
+        with open(sub_file, "w") as handle:
+            handle.write("locked inner")
+            handle.flush()
+
+            report = scan_directory_tree(temp_dir)
+            assert report.is_locked is True
+            assert len(report.locked_entries) >= 1
+            rel_paths = [e.relative_path.replace("\\", "/") for e in report.locked_entries]
+            assert "sub/test.txt" in rel_paths
+
+
+def test_watch_lock_events_initial():
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        temp_name = f.name
+    try:
+        gen = watch_lock_events(temp_name, interval=0.1)
+        first_event = next(gen)
+        assert first_event["event"] == "INITIAL_FREE"
+        assert first_event["report"].is_locked is False
+    finally:
+        if os.path.exists(temp_name):
+            os.remove(temp_name)
+
+
 def test_wait_for_release_success():
     with tempfile.NamedTemporaryFile(delete=False) as f:
         temp_name = f.name
     try:
-        # File is not locked, wait_for_release returns True immediately
         assert wait_for_release(temp_name, timeout=1.0) is True
     finally:
         if os.path.exists(temp_name):

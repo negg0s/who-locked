@@ -1,43 +1,86 @@
+from datetime import datetime
 import json
-import os
 import sys
+import time
 from typing import Optional
 import click
 
 from .context_menu import install_context_menu, is_context_menu_installed, uninstall_context_menu
-from .core import inspect_locks, release_locks, wait_for_release
+from .core import inspect_locks, release_locks, scan_directory_tree, wait_for_release, watch_lock_events
 from .doctor import run_diagnostics
-from .models import LockReport
+from .models import LockReport, TreeReport
 
 
-def format_report_text(report: LockReport, verbose: bool = False) -> str:
+def format_report_text(report: LockReport, verbose: bool = False, color: bool = True) -> str:
     lines = []
     lines.append(f"Target: {report.target_path}")
     type_label = "Directory" if report.is_directory else "File"
     lines.append(f"Type:   {type_label}")
 
     if report.error:
-        lines.append(f"Status: ERROR ({report.error})")
+        err_msg = click.style(f"ERROR ({report.error})", fg="red", bold=True) if color else f"ERROR ({report.error})"
+        lines.append(f"Status: {err_msg}")
         return "\n".join(lines)
 
     if not report.is_locked:
-        lines.append("Status: FREE (no active locks detected)")
+        status_msg = click.style("FREE (no active locks detected)", fg="green", bold=True) if color else "FREE (no active locks detected)"
+        lines.append(f"Status: {status_msg}")
         return "\n".join(lines)
 
     count = len(report.locking_processes)
-    lines.append(f"Status: LOCKED by {count} process(es)\n")
-    lines.append(f"{'PID':<8} {'NAME':<24} {'TYPE':<14} {'MEMORY':<12} {'USER'}")
+    status_msg = click.style(f"LOCKED by {count} process(es)", fg="red", bold=True) if color else f"LOCKED by {count} process(es)"
+    lines.append(f"Status: {status_msg}\n")
+
+    header = f"{'PID':<8} {'NAME':<24} {'TYPE':<14} {'MEMORY':<12} {'USER'}"
+    lines.append(click.style(header, bold=True) if color else header)
     lines.append("-" * 75)
 
     for proc in report.locking_processes:
         mem_str = f"{proc.memory_mb:.1f} MB" if proc.memory_mb is not None else "-"
         user_str = proc.username or "-"
-        lines.append(f"{proc.pid:<8} {proc.name[:23]:<24} {proc.app_type:<14} {mem_str:<12} {user_str}")
-        if verbose and proc.exe_path:
-            lines.append(f"         Path: {proc.exe_path}")
+        pid_str = click.style(f"{proc.pid:<8}", fg="cyan") if color else f"{proc.pid:<8}"
+        lines.append(f"{pid_str} {proc.name[:23]:<24} {proc.app_type:<14} {mem_str:<12} {user_str}")
+        if verbose:
+            if proc.exe_path:
+                lines.append(f"         Path:   {proc.exe_path}")
+            if proc.parent_pid:
+                p_name = proc.parent_name or "Unknown"
+                lines.append(f"         Parent: {p_name} (PID {proc.parent_pid})")
+            if proc.cmdline:
+                lines.append(f"         Cmd:    {proc.cmdline}")
 
     if verbose and report.queried_paths:
         lines.append(f"\nQueried resources: {len(report.queried_paths)} file(s)/handle(s)")
+
+    return "\n".join(lines)
+
+
+def format_tree_text(report: TreeReport, color: bool = True) -> str:
+    lines = []
+    lines.append(f"Root:    {report.root_path}")
+    lines.append(f"Scanned: {report.scanned_files_count} file(s)")
+
+    if report.error:
+        err_msg = click.style(f"ERROR ({report.error})", fg="red") if color else f"ERROR ({report.error})"
+        lines.append(f"Status:  {err_msg}")
+        return "\n".join(lines)
+
+    if not report.is_locked:
+        status_msg = click.style("CLEAN (no locked files in tree)", fg="green", bold=True) if color else "CLEAN (no locked files in tree)"
+        lines.append(f"Status:  {status_msg}")
+        return "\n".join(lines)
+
+    count_str = click.style(f"Found {len(report.locked_entries)} locked item(s):", fg="red", bold=True) if color else f"Found {len(report.locked_entries)} locked item(s):"
+    lines.append(f"\n{count_str}\n")
+
+    for entry in report.locked_entries:
+        rel_label = entry.relative_path
+        lines.append(f"  * {click.style(rel_label, bold=True) if color else rel_label}")
+        for p in entry.locking_processes:
+            mem_str = f", {p.memory_mb:.1f} MB" if p.memory_mb is not None else ""
+            parent_str = f", parent: {p.parent_name}" if p.parent_name else ""
+            p_line = f"      -> PID {p.pid} ({p.name}, {p.app_type}{mem_str}{parent_str})"
+            lines.append(click.style(p_line, fg="yellow") if color else p_line)
 
     return "\n".join(lines)
 
@@ -51,22 +94,96 @@ def cli() -> None:
 
 @cli.command("inspect")
 @click.argument("path", type=click.Path())
-@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
-@click.option("-v", "--verbose", is_flag=True, help="Show executable paths and details.")
+@click.option("--format", "output_format", type=click.Choice(["text", "json", "pids", "csv"]), default="text", show_default=True, help="Output format.")
+@click.option("--json", "json_flag", is_flag=True, help="Shortcut for --format json.")
+@click.option("-v", "--verbose", is_flag=True, help="Show executable paths, parents, and arguments.")
+@click.option("--no-color", is_flag=True, help="Disable ANSI colors.")
 @click.option("--max-files", default=100, show_default=True, help="Max files to scan inside directory.")
-def inspect_cmd(path: str, json_mode: bool, verbose: bool, max_files: int = 100) -> None:
+def inspect_cmd(path: str, output_format: str, json_flag: bool, verbose: bool, no_color: bool, max_files: int = 100) -> None:
     """Inspect active locks holding a file or directory."""
+    if json_flag:
+        output_format = "json"
+
     report = inspect_locks(path, max_dir_files=max_files)
-    if json_mode:
+
+    if output_format == "json":
         click.echo(json.dumps(report.to_dict(), indent=2))
+    elif output_format == "pids":
+        pids = [str(p.pid) for p in report.locking_processes]
+        if pids:
+            click.echo(" ".join(pids))
+    elif output_format == "csv":
+        click.echo("pid,name,type,status,memory_mb,username")
+        for p in report.locking_processes:
+            mem = f"{p.memory_mb:.1f}" if p.memory_mb is not None else ""
+            click.echo(f'{p.pid},"{p.name}","{p.app_type}","{p.app_status}",{mem},"{p.username or ""}"')
     else:
-        click.echo(format_report_text(report, verbose=verbose))
+        click.echo(format_report_text(report, verbose=verbose, color=not no_color))
 
     if report.error:
         sys.exit(2)
     elif report.is_locked:
         sys.exit(1)
     else:
+        sys.exit(0)
+
+
+@cli.command("tree")
+@click.argument("path", type=click.Path())
+@click.option("--max-files", default=1000, show_default=True, help="Maximum files to scan.")
+@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
+@click.option("--no-color", is_flag=True, help="Disable ANSI colors.")
+def tree_cmd(path: str, max_files: int, json_mode: bool, no_color: bool) -> None:
+    """Scan a directory tree and list every individual locked file."""
+    report = scan_directory_tree(path, max_files=max_files)
+    if json_mode:
+        click.echo(json.dumps(report.to_dict(), indent=2))
+    else:
+        click.echo(format_tree_text(report, color=not no_color))
+
+    if report.error:
+        sys.exit(2)
+    elif report.is_locked:
+        sys.exit(1)
+    else:
+        sys.exit(0)
+
+
+@cli.command("watch")
+@click.argument("path", type=click.Path())
+@click.option("-i", "--interval", default=0.5, show_default=True, help="Polling interval in seconds.")
+@click.option("--exit-on-free", is_flag=True, help="Exit when target is confirmed free.")
+@click.option("--exit-on-lock", is_flag=True, help="Exit when a lock is first detected.")
+@click.option("--beep", is_flag=True, help="Sound console bell on lock change.")
+@click.option("--no-color", is_flag=True, help="Disable ANSI colors.")
+def watch_cmd(path: str, interval: float, exit_on_free: bool, exit_on_lock: bool, beep: bool, no_color: bool) -> None:
+    """Monitor a file or folder in real time for lock state changes."""
+    click.echo(f"Watching {path} for lock changes (interval: {interval}s, press Ctrl+C to stop)...")
+
+    try:
+        for event_data in watch_lock_events(path, interval=interval):
+            event = event_data["event"]
+            ts_str = datetime.fromtimestamp(event_data["timestamp"]).strftime("%H:%M:%S.%f")[:-3]
+            report: LockReport = event_data["report"]
+
+            if beep:
+                sys.stdout.write("\a")
+                sys.stdout.flush()
+
+            if event in ("INITIAL_LOCKED", "LOCK_ACQUIRED"):
+                p_names = ", ".join(f"{p.name} (PID {p.pid})" for p in report.locking_processes)
+                tag = click.style("[LOCKED]", fg="red", bold=True) if not no_color else "[LOCKED]"
+                click.echo(f"[{ts_str}] {tag} Locked by: {p_names}")
+                if exit_on_lock:
+                    sys.exit(1)
+            elif event in ("INITIAL_FREE", "LOCK_RELEASED"):
+                tag = click.style("[FREE]  ", fg="green", bold=True) if not no_color else "[FREE]  "
+                dur_str = f" after {event_data['duration_sec']}s" if event_data["duration_sec"] > 0 else ""
+                click.echo(f"[{ts_str}] {tag} Target is free{dur_str}")
+                if exit_on_free:
+                    sys.exit(0)
+    except KeyboardInterrupt:
+        click.echo("\nStopped monitoring.")
         sys.exit(0)
 
 
