@@ -3,7 +3,7 @@
 [![CI](https://github.com/negg0s/who-locked/actions/workflows/ci.yml/badge.svg)](https://github.com/negg0s/who-locked/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A Windows command-line utility for finding which processes are holding locks on a file or folder. It can inspect open handles through the Windows Restart Manager API, inspect loaded DLL memory modules, decode access rights, close specific file handles without killing processes, take point-in-time snapshots, diff lock changes, analyze lock contention graphs, detect leaked locks during command execution, record lock timelines to JSONL, render ASCII Gantt timeline charts, benchmark query latency, scan directory trees, monitor lock transitions in real time, launch an interactive terminal UI, or terminate offending processes and clean stubborn directories.
+A Windows command-line utility for finding which processes are holding locks on a file or folder. It can inspect open handles through the Windows Restart Manager API, inspect loaded DLL memory modules, decode access rights, close specific file handles without killing processes, read or dump exclusively locked files via kernel handle duplication, assert lock constraints in CI pipelines, take point-in-time snapshots, diff lock changes, analyze lock contention graphs, detect leaked locks during command execution, record lock timelines to JSONL, render ASCII Gantt timeline charts, benchmark query latency, scan directory trees, monitor lock transitions in real time, launch an interactive terminal UI, or terminate offending processes and clean stubborn directories.
 
 Requirements: Windows 10 or newer, Python 3.9 or newer.
 
@@ -227,6 +227,38 @@ Found 2 locked item(s):
 Summary by locking process:
   - PID 4410 (node.exe): 1 file(s)
   - PID 9120 (esbuild.exe): 1 file(s)
+```
+
+## Reading and dumping exclusively locked files
+
+When a program opens a file with exclusive sharing flags (`FILE_SHARE_NONE`), normal read operations and copy commands fail with sharing violations (`ERROR_SHARING_VIOLATION` 32).
+
+`who-locked` duplicates the open handle directly from the locking process's handle table without terminating it or closing its handle:
+
+```powershell
+# Print file content to terminal:
+who-locked cat "C:\app\data.lock"
+
+# Print first 256 bytes as formatted hex dump:
+who-locked cat "C:\app\data.lock" -n 256 --hex
+
+# Dump a copy of an exclusively locked file to disk:
+who-locked dump "C:\app\data.lock" -o "C:\temp\data_backup.bin"
+```
+
+## Pipeline verification in CI and pre-commit hooks
+
+Assert that specific folders or build artifacts are free of locks before running deployment or clean steps:
+
+```powershell
+# Fails with exit code 1 if any locks are found:
+who-locked verify "C:\src\project"
+
+# Allow up to 2 benign locks:
+who-locked verify "C:\src\project" --max-locks 2
+
+# Output JSON summary for machine parsing:
+who-locked verify "C:\src\project" --json
 ```
 
 ## Cleaning stubborn directories

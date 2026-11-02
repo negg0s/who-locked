@@ -314,3 +314,42 @@ def test_cli_run_clean_command():
         assert res.exit_code == 0
         assert "0 file locks leaked by command." in res.output
 
+
+def test_cli_cat_and_dump():
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        src = os.path.join(temp_dir, "input.txt")
+        dst = os.path.join(temp_dir, "output.txt")
+        with open(src, "w", encoding="utf-8") as f:
+            f.write("Line 1: test file data\nLine 2: sample text\n")
+
+        res_cat = runner.invoke(cli, ["cat", src])
+        assert res_cat.exit_code == 0
+        assert "Line 1: test file data" in res_cat.output
+
+        res_cat_hex = runner.invoke(cli, ["cat", src, "--hex"])
+        assert res_cat_hex.exit_code == 0
+        assert "00000000:" in res_cat_hex.output
+
+        res_dump = runner.invoke(cli, ["dump", src, "-o", dst])
+        assert res_dump.exit_code == 0
+        assert "Dumped" in res_dump.output
+        assert os.path.exists(dst)
+        with open(dst, "r", encoding="utf-8") as f:
+            assert "Line 1: test file data" in f.read()
+
+
+def test_cli_verify():
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        res = runner.invoke(cli, ["verify", temp_dir])
+        assert res.exit_code == 0
+        assert "[PASS]" in res.output
+
+        res_json = runner.invoke(cli, ["verify", temp_dir, "--json"])
+        assert res_json.exit_code == 0
+        data = json.loads(res_json.output)
+        assert data["passed"] is True
+        assert data["lock_count"] == 0
+
+

@@ -25,6 +25,7 @@ from .html_report import render_html_report
 from .models import LockReport, TreeReport
 from .module_ops import find_processes_with_loaded_module
 from .plot import render_ascii_timeline
+from .reader import dump_locked_file, format_hex_dump, read_locked_file
 from .snapshot import LockSnapshot, compare_snapshots, take_snapshot
 from .trace import analyze_lock_trace, record_lock_trace
 from .tui import run_tui
@@ -724,6 +725,86 @@ def run_cmd(watch_dir: str, fail_on_leak: bool, cmd: tuple) -> None:
     sys.exit(result.returncode)
 
 
+@cli.command("cat")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("-n", "--bytes", "max_bytes", type=int, default=None, help="Maximum bytes to read.")
+@click.option("--hex", "hex_mode", is_flag=True, help="Print output as formatted hex dump.")
+def cat_cmd(path: str, max_bytes: Optional[int], hex_mode: bool) -> None:
+    """Read content of a file directly or by duplicating kernel handles if locked."""
+    try:
+        data = read_locked_file(path, max_bytes=max_bytes)
+        if hex_mode:
+            click.echo(format_hex_dump(data))
+        else:
+            try:
+                click.echo(data.decode("utf-8"), nl=False)
+            except UnicodeDecodeError:
+                click.echo(data.decode("latin-1", errors="replace"), nl=False)
+    except Exception as exc:
+        click.echo(f"Error reading {path}: {exc}", err=True)
+        sys.exit(1)
+
+
+@cli.command("dump")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("-o", "--output", "output_path", required=True, type=click.Path(), help="Target output file path.")
+@click.option("-n", "--bytes", "max_bytes", type=int, default=None, help="Maximum bytes to dump.")
+def dump_cmd(path: str, output_path: str, max_bytes: Optional[int]) -> None:
+    """Extract a copy of an exclusively locked file using handle duplication."""
+    try:
+        byte_count = dump_locked_file(path, output_path, max_bytes=max_bytes)
+        click.echo(f"Dumped {byte_count} bytes from {path} -> {output_path}")
+    except Exception as exc:
+        click.echo(f"Error dumping {path}: {exc}", err=True)
+        sys.exit(1)
+
+
+@cli.command("verify")
+@click.argument("path", default=".", type=click.Path(exists=True))
+@click.option("--max-locks", type=int, default=0, help="Maximum permitted lock count before failing.")
+@click.option("-q", "--quiet", is_flag=True, help="Suppress non-error output.")
+@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
+def verify_cmd(path: str, max_locks: int, quiet: bool, json_mode: bool) -> None:
+    """Assert file or directory lock count for CI and pre-commit pipelines."""
+    abs_path = os.path.abspath(path)
+    if os.path.isdir(abs_path):
+        tree = scan_directory_tree(abs_path)
+        lock_count = len(tree.locked_entries)
+        passed = lock_count <= max_locks
+        if json_mode:
+            click.echo(json.dumps({
+                "path": abs_path,
+                "passed": passed,
+                "lock_count": lock_count,
+                "max_locks": max_locks,
+                "locked_entries": [e.to_dict() for e in tree.locked_entries],
+            }, indent=2))
+        elif not quiet:
+            tag = "[PASS]" if passed else "[FAIL]"
+            click.echo(f"{tag} Path: {abs_path} (locks: {lock_count}, max permitted: {max_locks})")
+            if not passed:
+                for e in tree.locked_entries:
+                    procs = ", ".join(f"{p.name} (PID {p.pid})" for p in e.locking_processes)
+                    click.echo(f"  * {e.relative_path} -> held by: {procs}")
+        sys.exit(0 if passed else 1)
+    else:
+        report = inspect_locks([abs_path])
+        lock_count = len(report.locking_processes)
+        passed = lock_count <= max_locks
+        if json_mode:
+            click.echo(json.dumps({
+                "path": abs_path,
+                "passed": passed,
+                "lock_count": lock_count,
+                "max_locks": max_locks,
+                "locking_processes": [p.to_dict() for p in report.locking_processes],
+            }, indent=2))
+        elif not quiet:
+            tag = "[PASS]" if passed else "[FAIL]"
+            click.echo(f"{tag} File: {abs_path} (locks: {lock_count}, max permitted: {max_locks})")
+        sys.exit(0 if passed else 1)
+
+
 @cli.command("completion")
 @click.argument("shell", type=click.Choice(["powershell", "bash"]), default="powershell")
 def completion_cmd(shell: str) -> None:
@@ -732,7 +813,7 @@ def completion_cmd(shell: str) -> None:
         click.echo(
             'Register-ArgumentCompleter -Native -CommandName who-locked -ScriptBlock {\n'
             '    param($wordToComplete, $commandAst, $cursorPosition)\n'
-            "    $cmds = @('inspect', 'tree', 'find', 'dll', 'plot', 'snapshot', 'diff', 'graph', 'run', 'tui', 'bench', 'trace', 'stats', 'close-handle', 'clean', 'watch', 'release', 'wait', 'menu', 'doctor', 'completion')\n"
+            "    $cmds = @('inspect', 'tree', 'find', 'dll', 'plot', 'cat', 'dump', 'verify', 'snapshot', 'diff', 'graph', 'run', 'tui', 'bench', 'trace', 'stats', 'close-handle', 'clean', 'watch', 'release', 'wait', 'menu', 'doctor', 'completion')\n"
             '    $cmds | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {\n'
             '        [System.Management.Automation.CompletionResult]::new($_, $_, "ParameterValue", $_)\n'
             '    }\n'
@@ -743,7 +824,7 @@ def completion_cmd(shell: str) -> None:
             '_who_locked_completion() {\n'
             '    local cur prev words cword\n'
             '    _init_completion || return\n'
-            '    local commands="inspect tree find dll plot snapshot diff graph run tui bench trace stats close-handle clean watch release wait menu doctor completion"\n'
+            '    local commands="inspect tree find dll plot cat dump verify snapshot diff graph run tui bench trace stats close-handle clean watch release wait menu doctor completion"\n'
             '    if [[ $cword -eq 1 ]]; then\n'
             '        COMPREPLY=( $(compgen -W "$commands" -- "$cur") )\n'
             '    fi\n'

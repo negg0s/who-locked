@@ -25,12 +25,13 @@ from .html_report import render_html_report
 from .models import LockedFileEntry, LockingProcess, LockReport, TreeReport
 from .module_ops import find_processes_with_loaded_module
 from .plot import render_ascii_timeline
+from .reader import dump_locked_file, format_hex_dump, read_locked_file
 from .safety import CRITICAL_NAMES, PROTECTED_PIDS, is_safe_to_terminate
 from .snapshot import LockSnapshot, ProcessRef, SnapshotDiff, compare_snapshots, take_snapshot
 from .trace import analyze_lock_trace, record_lock_trace
 from .tui import run_tui
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 __all__ = [
     "__version__",
     "analyze_lock_trace",
@@ -41,9 +42,11 @@ __all__ = [
     "compare_snapshots",
     "ContentionReport",
     "decode_access_mask",
+    "dump_locked_file",
     "find_file_handles_in_process",
     "find_locks_by_process",
     "find_processes_with_loaded_module",
+    "format_hex_dump",
     "get_all_system_handles",
     "get_process_file_handle_details",
     "inspect_locks",
@@ -53,6 +56,7 @@ __all__ = [
     "LockReport",
     "LockSnapshot",
     "ProcessRef",
+    "read_locked_file",
     "record_lock_trace",
     "release_locks",
     "release_selected_processes",

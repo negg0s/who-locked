@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "who-locked"
-version = "0.8.0"
-description = "Fast Windows file lock inspector, handle closer, diff analyzer, and TUI dashboard."
+version = "0.9.0"
+description = "Fast Windows file lock inspector, handle closer, locked file reader, and TUI dashboard."
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
