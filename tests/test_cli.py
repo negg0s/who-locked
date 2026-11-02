@@ -1,0 +1,64 @@
+import json
+import os
+import tempfile
+from click.testing import CliRunner
+
+from who_locked.cli import cli
+
+
+def test_cli_help():
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--help"])
+    assert result.exit_code == 0
+    assert "Fast Windows file lock inspector" in result.output
+
+
+def test_cli_doctor():
+    runner = CliRunner()
+    result = runner.invoke(cli, ["doctor"])
+    assert result.exit_code == 0
+    assert "Environment Diagnostics" in result.output
+
+
+def test_cli_doctor_json():
+    runner = CliRunner()
+    result = runner.invoke(cli, ["doctor", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert "ready" in data
+    assert "checks" in data
+
+
+def test_cli_inspect_free_file():
+    runner = CliRunner()
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        temp_name = f.name
+    try:
+        result = runner.invoke(cli, ["inspect", temp_name])
+        assert result.exit_code == 0
+        assert "Status: FREE" in result.output
+    finally:
+        if os.path.exists(temp_name):
+            os.remove(temp_name)
+
+
+def test_cli_inspect_json():
+    runner = CliRunner()
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        temp_name = f.name
+    try:
+        result = runner.invoke(cli, ["inspect", temp_name, "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["is_locked"] is False
+        assert data["process_count"] == 0
+    finally:
+        if os.path.exists(temp_name):
+            os.remove(temp_name)
+
+
+def test_cli_menu_status():
+    runner = CliRunner()
+    result = runner.invoke(cli, ["menu", "status"])
+    assert result.exit_code == 0
+    assert "Explorer context menu item:" in result.output
