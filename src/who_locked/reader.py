@@ -82,18 +82,17 @@ def read_locked_file(target_path: str, max_bytes: Optional[int] = None) -> bytes
     if not os.path.exists(abs_path):
         raise FileNotFoundError(f"File not found: {abs_path}")
 
-    # Step 1: try direct read first
+    # Try direct read first
     try:
         with open(abs_path, "rb") as handle:
             if max_bytes is not None:
                 return handle.read(max_bytes)
             return handle.read()
     except (PermissionError, OSError):
-        # File is locked exclusively or sharing violation occurred
         if sys.platform != "win32":
             raise
 
-    # Step 2: identify locking processes and duplicate their open handle
+    # Identify locking processes and duplicate their open handle
     kernel32, _ = _setup_apis()
     if not kernel32:
         raise PermissionError(f"Cannot duplicate handle on non-Windows platform for {abs_path}")
