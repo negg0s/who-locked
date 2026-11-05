@@ -10,15 +10,27 @@ from .restart_manager import RestartManagerSession
 
 def _compute_stats(values: List[float]) -> Dict[str, float]:
     if not values:
-        return {"min": 0.0, "median": 0.0, "p95": 0.0, "max": 0.0, "mean": 0.0}
+        return {
+            "min": 0.0,
+            "median": 0.0,
+            "p95": 0.0,
+            "p99": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "stddev": 0.0,
+        }
     sorted_v = sorted(values)
     p95_idx = int(0.95 * (len(sorted_v) - 1))
+    p99_idx = int(0.99 * (len(sorted_v) - 1))
+    stddev = round(statistics.stdev(values), 3) if len(values) > 1 else 0.0
     return {
         "min": round(min(sorted_v), 3),
         "median": round(statistics.median(sorted_v), 3),
         "p95": round(sorted_v[p95_idx], 3),
+        "p99": round(sorted_v[p99_idx], 3),
         "max": round(max(sorted_v), 3),
         "mean": round(statistics.mean(sorted_v), 3),
+        "stddev": stddev,
     }
 
 

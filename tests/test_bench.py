@@ -12,3 +12,5 @@ def test_run_benchmark():
     assert "restart_manager_ms" in res
     assert "nt_handle_scan_ms" in res
     assert res["restart_manager_ms"]["median"] >= 0.0
+    assert "p99" in res["restart_manager_ms"]
+    assert "stddev" in res["restart_manager_ms"]
