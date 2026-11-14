@@ -160,7 +160,7 @@ def get_process_file_handle_details(pid: int, target_path: str) -> List[HandleIn
         return []
 
     cur_proc = kernel32.GetCurrentProcess()
-    norm_target = os.path.normcase(os.path.abspath(target_path))
+    norm_target = os.path.normcase(os.path.realpath(target_path))
     entry_size = ctypes.sizeof(SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX)
     path_buf = (ctypes.c_wchar * 1024)()
     details: List[HandleInfo] = []
@@ -186,9 +186,15 @@ def get_process_file_handle_details(pid: int, target_path: str) -> List[HandleIn
                         n = kernel32.GetFinalPathNameByHandleW(dup, path_buf, 1024, 0)
                         if n > 0:
                             path_str = path_buf.value
-                            if path_str.startswith("\\\\?\\"):
-                                path_str = path_str[4:]
-                            if os.path.normcase(path_str) == norm_target:
+                            is_match = False
+                            try:
+                                is_match = os.path.samefile(path_str, target_path)
+                            except (OSError, ValueError):
+                                if path_str.startswith("\\\\?\\"):
+                                    path_str = path_str[4:]
+                                is_match = (os.path.normcase(os.path.realpath(path_str)) == norm_target)
+
+                            if is_match:
                                 rights = decode_access_mask(entry.GrantedAccess)
                                 details.append(
                                     HandleInfo(
