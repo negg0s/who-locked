@@ -11,20 +11,20 @@ requires-python = ">=3.9"
 authors = [
     { name = "negg0s" }
 ]
-license = { text = "MIT" }
+license = "MIT"
 keywords = ["windows", "locks", "restart-manager", "cli", "tui", "dll", "trace", "handles", "file-locks", "sysinternals", "process-tuner"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: System :: Systems Administration",
     "Topic :: Utilities",
 ]
