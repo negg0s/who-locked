@@ -9,3 +9,7 @@ build/
 .venv/
 .coverage
 htmlcov/
+# Python cache
+*.pyc
+*.pyo
+*.pyd
