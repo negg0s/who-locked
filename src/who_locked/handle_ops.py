@@ -181,20 +181,22 @@ def get_process_file_handle_details(pid: int, target_path: str) -> List[HandleIn
                     DUPLICATE_SAME_ACCESS,
                 )
                 if res and dup:
-                    n = kernel32.GetFinalPathNameByHandleW(dup, path_buf, 1024, 0)
-                    if n > 0:
-                        path_str = path_buf.value
-                        if path_str.startswith("\\\\?\\"):
-                            path_str = path_str[4:]
-                        if os.path.normcase(path_str) == norm_target:
-                            rights = decode_access_mask(entry.GrantedAccess)
-                            details.append(
-                                HandleInfo(
-                                    handle_value=entry.HandleValue,
-                                    granted_access=entry.GrantedAccess,
-                                    access_rights=rights,
+                    file_type = kernel32.GetFileType(dup)
+                    if file_type == 1:  # FILE_TYPE_DISK only (avoids hangs on named pipes/devices)
+                        n = kernel32.GetFinalPathNameByHandleW(dup, path_buf, 1024, 0)
+                        if n > 0:
+                            path_str = path_buf.value
+                            if path_str.startswith("\\\\?\\"):
+                                path_str = path_str[4:]
+                            if os.path.normcase(path_str) == norm_target:
+                                rights = decode_access_mask(entry.GrantedAccess)
+                                details.append(
+                                    HandleInfo(
+                                        handle_value=entry.HandleValue,
+                                        granted_access=entry.GrantedAccess,
+                                        access_rights=rights,
+                                    )
                                 )
-                            )
                     kernel32.CloseHandle(dup)
     finally:
         kernel32.CloseHandle(h_proc)
